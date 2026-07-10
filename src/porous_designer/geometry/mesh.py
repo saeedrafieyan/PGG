@@ -36,6 +36,9 @@ def solid_grid_to_mesh(solid_grid: np.ndarray, voxel_mm: float) -> MeshBuildResu
     mesh.update_faces(mesh.nondegenerate_faces())
     mesh.remove_unreferenced_vertices()
     mesh.fix_normals()
+    if float(mesh.volume) < 0:
+        mesh.invert()
+        mesh.fix_normals()
     bounds = mesh.bounds
     return MeshBuildResult(
         mesh=mesh,

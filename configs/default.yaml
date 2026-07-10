@@ -2,9 +2,20 @@ schema_version: "1.0"
 generation:
   preview_resolution_mm: 0.10
   final_resolution_mm: 0.04
+  reference_resolution_mm: 0.03
   maximum_memory_gb: 16.0
   maximum_runtime_s: 600
   deterministic_seed: 42
+profiles:
+  preview:
+    resolution_mm: 0.10
+    final_acceptance: false
+  final:
+    resolution_mm: 0.04
+    final_acceptance: true
+  reference:
+    resolution_mm: 0.03
+    final_acceptance: false
 validation:
   dimension_tolerance_mm: 0.05
   porosity_tolerance_default: 0.02
@@ -12,6 +23,20 @@ validation:
   porosity_disagreement_policy: fail
   minimum_wall_thickness_resolution_factor: 2.0
   minimum_solid_component_voxels: 8
+cleanup:
+  max_removed_solid_fraction: 0.00001
+  max_removed_component_voxels: 7
+  reject_boundary_touching: false
+resources:
+  warning_memory_fraction: 0.50
+  maximum_memory_fraction: 0.75
+optimization:
+  default_profile: none
+  max_porosity_change: 0.005
+  max_volume_change_fraction: 0.005
+  max_bounding_box_change_mm: 0.02
+  max_surface_deviation_mm: 0.04
+  surface_sample_count: 2048
 repair:
   max_geometry_retries: 2
   max_mesh_retries: 2

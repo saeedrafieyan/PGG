@@ -1,4 +1,4 @@
-"""Deterministic STL generation service (Phase 2A)."""
+"""Deterministic STL generation service."""
 
 from __future__ import annotations
 
@@ -16,18 +16,25 @@ import yaml
 from porous_designer.blackboard.persistence import persist_blackboard, save_environment
 from porous_designer.blackboard.state import Blackboard
 from porous_designer.blackboard.state_machine import StateMachine
-from porous_designer.domain.enums import ExportFormat, RunStatus, StructureFamily
+from porous_designer.domain.enums import ExportFormat, FeasibilityStatus, RunStatus
 from porous_designer.domain.specification import DesignSpecification
 from porous_designer.exporters.stl_exporter import export_stl
-from porous_designer.generators.sphere_lattices import LatticeType
+from porous_designer.generators.registry import get_generator
 from porous_designer.geometry.connectivity import analyze_void_connectivity
-from porous_designer.geometry.mesh import mesh_domain_volume, mesh_porosity, solid_grid_to_mesh
+from porous_designer.geometry.domains import build_domain_grid, domain_volume
+from porous_designer.geometry.mesh import mesh_porosity, solid_grid_to_mesh
 from porous_designer.geometry.voxel import (
     remove_small_solid_components,
-    sphere_solid_grid,
     void_grid,
     voxel_porosity,
 )
+from porous_designer.services.mesh_optimization import (
+    MeshOptimizationResult,
+    OptimizationProfile,
+    OptimizationThresholds,
+    optimize_and_validate_mesh,
+)
+from porous_designer.services.resource_estimation import ResourceEstimate, estimate_resources
 from porous_designer.services.validation_service import ValidationConfig, run_validation
 from porous_designer.tuning.porosity_solver import TuningResult, bisection_solve
 
@@ -35,6 +42,7 @@ from porous_designer.tuning.porosity_solver import TuningResult, bisection_solve
 class GenerationProfile(str, Enum):
     PREVIEW = "preview"
     FINAL = "final"
+    REFERENCE = "reference"
 
 
 @dataclass
@@ -68,6 +76,8 @@ class GenerationResult:
     validation_passed: bool
     messages: list[str] = field(default_factory=list)
     connectivity: dict[str, Any] = field(default_factory=dict)
+    resource_estimate: ResourceEstimate | None = None
+    optimization: MeshOptimizationResult | None = None
 
 
 def load_app_config(path: str | Path = "configs/default.yaml") -> dict[str, Any]:
@@ -80,6 +90,8 @@ def load_app_config(path: str | Path = "configs/default.yaml") -> dict[str, Any]
 def _resolution_for_profile(spec: DesignSpecification, profile: GenerationProfile) -> float:
     if profile == GenerationProfile.PREVIEW:
         return spec.generation.preview_resolution_mm
+    if profile == GenerationProfile.REFERENCE:
+        return getattr(spec.generation, "reference_resolution_mm", spec.generation.final_resolution_mm)
     return spec.generation.final_resolution_mm
 
 
@@ -89,19 +101,20 @@ def _tuning_voxel_mm(spec: DesignSpecification, final_voxel_mm: float) -> float:
     return max(final_voxel_mm, coarse)
 
 
-def generate_sphere_lattice_stl(
+def generate_porous_stl(
     spec: DesignSpecification,
     *,
     profile: GenerationProfile = GenerationProfile.FINAL,
+    optimization_profile: OptimizationProfile = OptimizationProfile.NONE,
     run_dir: Path | None = None,
     blackboard: Blackboard | None = None,
     config: dict[str, Any] | None = None,
 ) -> GenerationResult:
-    """End-to-end deterministic STL pipeline for sphere-pore box domains."""
-    if not spec.structure.family.is_sphere_lattice:
-        raise ValueError(f"Phase 2A supports sphere lattices only, got {spec.structure.family}")
-    if spec.domain.shape.value != "box":
-        raise ValueError("Phase 2A supports box domains only.")
+    """End-to-end deterministic STL pipeline for registered generators."""
+    generator = get_generator(spec.structure.family)
+    generator.validate_specification(spec)
+    if spec.domain.shape not in generator.supported_domains():
+        raise ValueError(f"{spec.structure.family.value} does not support {spec.domain.shape.value}")
 
     config = config or load_app_config()
     val_cfg = ValidationConfig(
@@ -123,7 +136,7 @@ def generate_sphere_lattice_stl(
         sm.transition(RunStatus.NEEDS_USER_REVIEW, "Specification ready for review")
         sm.transition(RunStatus.SPECIFICATION_APPROVED, "CLI auto-approve")
         bb.set_approved_spec(spec)
-        sm.transition(RunStatus.FEASIBILITY_CHECKING, "Phase 2A deterministic feasibility gate")
+        sm.transition(RunStatus.FEASIBILITY_CHECKING, "Deterministic feasibility gate")
 
     run_dir = run_dir or Path(spec.export.output_directory) / bb.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -133,19 +146,49 @@ def generate_sphere_lattice_stl(
     messages: list[str] = []
     if ExportFormat.STEP in spec.export.formats:
         messages.append(
-            "STEP export is disabled in Phase 2A (known failing fixture: negative B-Rep volume). "
+            "STEP export is disabled in Phase 2B (known failing fixture: negative B-Rep volume). "
             "Generating STL only."
         )
 
-    box = tuple(spec.domain.dimensions_mm)
-    pore_d = spec.structure.pore_diameter_mm
-    assert pore_d is not None
-    radius = pore_d / 2.0
-    lattice = LatticeType.from_family(spec.structure.family)
     final_voxel = _resolution_for_profile(spec, profile)
     tune_voxel = _tuning_voxel_mm(spec, final_voxel)
     target_porosity = spec.targets.porosity_target.target
     porosity_tol = spec.targets.porosity_target.tolerance or val_cfg.porosity_tolerance
+    resources_cfg = config.get("resources", {})
+    resource_estimate = estimate_resources(
+        spec,
+        final_voxel,
+        warning_memory_fraction=resources_cfg.get("warning_memory_fraction", 0.50),
+        maximum_memory_fraction=resources_cfg.get("maximum_memory_fraction", 0.75),
+    )
+    bb.feasibility = None
+    bb.geometry_metrics["resource_estimate"] = resource_estimate.to_dict()
+    if resource_estimate.status == FeasibilityStatus.INFEASIBLE:
+        sm.transition(RunStatus.INFEASIBLE, resource_estimate.message)
+        persist_blackboard(bb, spec.export.output_directory)
+        return GenerationResult(
+            success=False,
+            run_id=bb.run_id,
+            run_dir=run_dir,
+            profile=profile,
+            lattice_spacing_mm=0.0,
+            tuning_grid_porosity=0.0,
+            final_voxel_porosity=0.0,
+            final_mesh_porosity=0.0,
+            triangle_count=0,
+            solid_components=0,
+            watertight=False,
+            stl_path=None,
+            stl_sha256=None,
+            tuning=None,
+            timing=TimingBreakdown(),
+            peak_memory_mb=0.0,
+            validation_passed=False,
+            messages=messages + [resource_estimate.message],
+            resource_estimate=resource_estimate,
+        )
+    if resource_estimate.status == FeasibilityStatus.CONDITIONALLY_FEASIBLE:
+        messages.append(resource_estimate.message)
 
     timing = TimingBreakdown()
     tracemalloc.start()
@@ -155,18 +198,19 @@ def generate_sphere_lattice_stl(
     sm.transition(RunStatus.PREVIEW_GENERATING if profile == GenerationProfile.PREVIEW else RunStatus.FINAL_GENERATING)
     t0 = time.perf_counter()
 
-    def eval_porosity(spacing: float) -> float:
-        grid = sphere_solid_grid(box, tune_voxel, radius, spacing, lattice)
-        return voxel_porosity(grid)
+    tune_domain = build_domain_grid(spec.domain, tune_voxel)
 
-    spacing_lo = 0.5 * pore_d
-    spacing_hi = 3.0 * pore_d
+    def eval_porosity(parameter: float) -> float:
+        field = generator.generate_voxels(spec, tune_domain, parameter)
+        return voxel_porosity(field.solid_grid, tune_domain.mask)
+
+    param_lo, param_hi = generator.default_search_interval(spec)
     tuning = bisection_solve(
         target_porosity,
         eval_porosity,
-        spacing_lo,
-        spacing_hi,
-        decreasing=True,
+        param_lo,
+        param_hi,
+        decreasing=generator.monotonic_decreasing,
         tolerance=porosity_tol,
         max_iterations=40,
     )
@@ -196,40 +240,78 @@ def generate_sphere_lattice_stl(
             messages=messages + [tuning.message],
         )
 
-    lattice_spacing = tuning.parameter_mm
-    spec.structure.lattice_spacing_mm = lattice_spacing
+    control_parameter = tuning.parameter_mm
+    if spec.structure.family.is_sphere_lattice:
+        spec.structure.lattice_spacing_mm = control_parameter
+    else:
+        spec.structure.tpms_level_set = control_parameter
 
     # --- final voxel grid ---
     t0 = time.perf_counter()
-    solid_grid = sphere_solid_grid(box, final_voxel, radius, lattice_spacing, lattice)
-    solid_grid, removed_solid_components, removed_solid_voxels = remove_small_solid_components(
+    final_domain = build_domain_grid(spec.domain, final_voxel)
+    generated = generator.generate_voxels(spec, final_domain, control_parameter)
+    solid_grid = generated.solid_grid
+    cleanup_cfg = config.get("cleanup", {})
+    solid_grid, cleanup_report = remove_small_solid_components(
         solid_grid,
         min_voxels=int(config.get("validation", {}).get("minimum_solid_component_voxels", 8)),
+        voxel_mm=final_voxel,
+        domain_mask=final_domain.mask,
+        max_removed_solid_fraction=cleanup_cfg.get("max_removed_solid_fraction", 1e-5),
+        max_removed_component_voxels=cleanup_cfg.get("max_removed_component_voxels"),
+        reject_boundary_touching=cleanup_cfg.get("reject_boundary_touching", False),
     )
-    final_vox_por = voxel_porosity(solid_grid)
+    if not cleanup_report.accepted:
+        messages.append(f"cleanup rejected: {cleanup_report.reason}")
+    final_vox_por = voxel_porosity(solid_grid, final_domain.mask)
     void = void_grid(solid_grid)
-    connectivity = analyze_void_connectivity(void)
+    connectivity = analyze_void_connectivity(void, final_domain.mask)
     timing.voxel_generation_s = time.perf_counter() - t0
 
     # --- mesh ---
     t0 = time.perf_counter()
     mesh_result = solid_grid_to_mesh(solid_grid, final_voxel)
     timing.marching_cubes_s = time.perf_counter() - t0
-    domain_vol = mesh_domain_volume(box)
+    domain_vol = domain_volume(spec.domain)
     mesh_por = mesh_porosity(mesh_result.volume_mm3, domain_vol)
 
     # --- validation ---
     t0 = time.perf_counter()
     sm.transition(RunStatus.VALIDATING)
-    report = run_validation(spec, mesh_result.mesh, solid_grid, final_voxel, connectivity, val_cfg)
+    report = run_validation(spec, mesh_result.mesh, solid_grid, final_voxel, connectivity, final_domain.mask, val_cfg)
     bb.set_validation_report(report)
     timing.validation_s = time.perf_counter() - t0
 
     # --- export ---
     t0 = time.perf_counter()
-    stl_name = spec.export.output_name + (".preview.stl" if profile == GenerationProfile.PREVIEW else ".stl")
+    if profile == GenerationProfile.PREVIEW:
+        stl_name = spec.export.output_name + ".preview.stl"
+    elif profile == GenerationProfile.REFERENCE:
+        stl_name = spec.export.output_name + "_reference.stl"
+    else:
+        stl_name = spec.export.output_name + "_master.stl"
     stl_path = geom_dir / stl_name
     export_result = export_stl(mesh_result.mesh, stl_path)
+    optimization_result = None
+    optimization_export = None
+    if profile == GenerationProfile.FINAL:
+        opt_cfg = config.get("optimization", {})
+        thresholds = OptimizationThresholds(
+            max_porosity_change=opt_cfg.get("max_porosity_change", 0.005),
+            max_volume_change_fraction=opt_cfg.get("max_volume_change_fraction", 0.005),
+            max_bbox_change_mm=opt_cfg.get("max_bounding_box_change_mm", 0.02),
+            max_surface_deviation_mm=opt_cfg.get("max_surface_deviation_mm", final_voxel),
+            sample_count=opt_cfg.get("surface_sample_count", 2048),
+        )
+        optimized_path = geom_dir / f"{spec.export.output_name}_optimized.stl"
+        optimization_result, optimization_export = optimize_and_validate_mesh(
+            mesh_result.mesh,
+            master_path=stl_path,
+            optimized_path=optimized_path,
+            domain_volume_mm3=domain_vol,
+            profile=optimization_profile,
+            thresholds=thresholds,
+        )
     timing.export_s = time.perf_counter() - t0
 
     timing.total_s = time.perf_counter() - t_total
@@ -242,14 +324,19 @@ def generate_sphere_lattice_stl(
     _write_timing(run_dir / "timing.json", timing, peak_mb)
     spec.save_yaml(run_dir / "approved_specification.yaml")
     bb.geometry_metrics = {
-        "lattice_spacing_mm": lattice_spacing,
+        "control_parameter": control_parameter,
+        "control_parameter_name": generator.control_parameter,
+        "lattice_spacing_mm": spec.structure.lattice_spacing_mm,
+        "tpms_level_set": spec.structure.tpms_level_set,
         "tuning_grid_porosity": tuning.estimated_porosity,
         "tuning_voxel_mm": tune_voxel,
         "final_voxel_porosity": final_vox_por,
         "final_mesh_porosity": mesh_por,
         "final_voxel_mm": final_voxel,
-        "removed_solid_components": removed_solid_components,
-        "removed_solid_voxels": removed_solid_voxels,
+        "cleanup": cleanup_report.__dict__,
+        "resource_estimate": resource_estimate.to_dict(),
+        "generator": generator.describe_parameters(),
+        "generator_metrics": generated.generator_metrics,
     }
     bb.mesh_metrics = {
         "triangle_count": mesh_result.faces,
@@ -258,15 +345,25 @@ def generate_sphere_lattice_stl(
     }
     bb.connectivity_metrics = connectivity.__dict__
     bb.export_results = {
-        "stl": str(export_result.path),
+        "stl": str((optimization_result.recommended_path if optimization_result else export_result.path)),
+        "master_stl": str(export_result.path),
+        "optimized_stl": str(optimization_export.path) if optimization_export else None,
         "sha256": export_result.sha256,
+        "optimized_sha256": optimization_export.sha256 if optimization_export else None,
         "step": "disabled_phase_2a",
     }
-    bb.artifacts["stl"] = str(export_result.path)
+    bb.artifacts["stl"] = bb.export_results["stl"]
+    bb.artifacts["master_stl"] = str(export_result.path)
+    if optimization_export:
+        bb.artifacts["optimized_stl"] = str(optimization_export.path)
+    if optimization_result:
+        bb.mesh_metrics["optimization"] = optimization_result.to_dict()
 
     checksums = {
         "stl_sha256": export_result.sha256,
-        "step_status": "disabled_phase_2a",
+        "optimized_stl_sha256": optimization_export.sha256 if optimization_export else None,
+        "recommended_stl": bb.export_results["stl"],
+        "step_status": "disabled_phase_2b",
         "legacy_federica_step_fixture": {
             "validation_status": "FAILED",
             "reason": "negative B-Rep volume on gmsh reimport; bbox extends outside nominal domain",
@@ -276,7 +373,12 @@ def generate_sphere_lattice_stl(
     (run_dir / "validation_report.json").write_text(
         report.model_dump_json(indent=2), encoding="utf-8"
     )
-    passed = report.overall_status.value == "pass" and tuning.converged
+    final_acceptance_profile = profile == GenerationProfile.FINAL
+    passed = tuning.converged and (
+        (report.overall_status.value == "pass" and cleanup_report.accepted)
+        if final_acceptance_profile
+        else True
+    )
     if passed:
         sm.transition(RunStatus.PASSED, "Validation passed")
         sm.transition(RunStatus.EXPORTED, "STL exported")
@@ -292,21 +394,41 @@ def generate_sphere_lattice_stl(
         run_id=bb.run_id,
         run_dir=run_dir,
         profile=profile,
-        lattice_spacing_mm=lattice_spacing,
+        lattice_spacing_mm=control_parameter,
         tuning_grid_porosity=tuning.estimated_porosity,
         final_voxel_porosity=final_vox_por,
         final_mesh_porosity=mesh_por,
         triangle_count=mesh_result.faces,
         solid_components=solid_comp,
         watertight=mesh_result.watertight,
-        stl_path=export_result.path,
-        stl_sha256=export_result.sha256,
+        stl_path=Path(bb.export_results["stl"]),
+        stl_sha256=optimization_export.sha256 if optimization_export else export_result.sha256,
         tuning=tuning,
         timing=timing,
         peak_memory_mb=peak_mb,
         validation_passed=passed,
         messages=messages,
         connectivity=connectivity.__dict__,
+        resource_estimate=resource_estimate,
+        optimization=optimization_result,
+    )
+
+
+def generate_sphere_lattice_stl(
+    spec: DesignSpecification,
+    *,
+    profile: GenerationProfile = GenerationProfile.FINAL,
+    run_dir: Path | None = None,
+    blackboard: Blackboard | None = None,
+    config: dict[str, Any] | None = None,
+) -> GenerationResult:
+    """Backward-compatible Phase 2A entry point."""
+    return generate_porous_stl(
+        spec,
+        profile=profile,
+        run_dir=run_dir,
+        blackboard=blackboard,
+        config=config,
     )
 
 

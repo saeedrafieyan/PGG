@@ -8,8 +8,9 @@ import trimesh
 
 from porous_designer.domain.specification import DesignSpecification
 from porous_designer.domain.validation import ValidationReport
+from porous_designer.geometry.domains import domain_bounds, domain_volume
 from porous_designer.geometry.connectivity import ConnectivityMetrics, analyze_void_connectivity
-from porous_designer.geometry.mesh import mesh_domain_volume, mesh_porosity
+from porous_designer.geometry.mesh import mesh_porosity
 from porous_designer.geometry.voxel import void_grid, voxel_porosity
 from porous_designer.validation.connectivity_validator import validate_connectivity
 from porous_designer.validation.geometry_validator import add_checks_to_report, validate_dimensions
@@ -31,18 +32,19 @@ def run_validation(
     solid_grid,
     voxel_mm: float,
     connectivity: ConnectivityMetrics,
+    domain_mask=None,
     config: ValidationConfig | None = None,
 ) -> ValidationReport:
     config = config or ValidationConfig()
     report = ValidationReport()
-    box = tuple(spec.domain.dimensions_mm)
-    domain_vol = mesh_domain_volume(box)
-    vox_por = voxel_porosity(solid_grid)
+    bounds = domain_bounds(spec.domain)
+    domain_vol = domain_volume(spec.domain)
+    vox_por = voxel_porosity(solid_grid, domain_mask)
     mesh_por = mesh_porosity(float(mesh.volume), domain_vol)
     target = spec.targets.porosity_target.target
     tol = spec.targets.porosity_target.tolerance or config.porosity_tolerance
 
-    add_checks_to_report(report, validate_dimensions(mesh.bounds[0], mesh.bounds[1], box, config.dimension_tolerance_mm))
+    add_checks_to_report(report, validate_dimensions(mesh.bounds[0], mesh.bounds[1], bounds, config.dimension_tolerance_mm))
     add_checks_to_report(report, validate_mesh(mesh, domain_volume_mm3=domain_vol, require_single_solid=spec.constraints.require_single_solid_component))
     add_checks_to_report(
         report,

@@ -92,6 +92,25 @@ def validate_mesh(
         )
     )
 
+    nonmanifold_edges = 0
+    try:
+        unique_edges, counts = np.unique(np.sort(mesh.edges, axis=1), axis=0, return_counts=True)
+        nonmanifold_edges = int((counts != 2).sum())
+    except Exception:
+        nonmanifold_edges = -1
+    checks.append(
+        ValidationCheck(
+            name="nonmanifold_edges",
+            requested_value=0,
+            achieved_value=nonmanifold_edges,
+            units="count",
+            status=ValidationStatus.PASS if nonmanifold_edges == 0 else ValidationStatus.WARNING,
+            severity=Severity.WARNING,
+            method="edge incidence count",
+            message="Edges not shared by exactly two triangles.",
+        )
+    )
+
     checks.append(
         ValidationCheck(
             name="triangle_count",

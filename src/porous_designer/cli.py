@@ -7,10 +7,15 @@ import json
 import sys
 from pathlib import Path
 
+import trimesh
+
 from porous_designer import __version__
 from porous_designer.domain.specification import DesignSpecification, load_legacy_spec
 from porous_designer.logging_config import configure_logging, get_logger
-from porous_designer.services.generation_service import GenerationProfile, generate_sphere_lattice_stl
+from porous_designer.services.generation_service import GenerationProfile, generate_porous_stl
+from porous_designer.services.mesh_optimization import OptimizationProfile, optimize_and_validate_mesh
+from porous_designer.services.resource_estimation import estimate_resources
+from porous_designer.services.sensitivity_service import run_resolution_sensitivity
 from porous_designer.services.validation_service import validate_standalone_stl
 
 
@@ -34,8 +39,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    profile = GenerationProfile.PREVIEW if args.preview else GenerationProfile.FINAL
-    result = generate_sphere_lattice_stl(spec, profile=profile)
+    profile = GenerationProfile.PREVIEW if args.preview else GenerationProfile(args.profile)
+    result = generate_porous_stl(
+        spec,
+        profile=profile,
+        optimization_profile=OptimizationProfile(args.optimization),
+    )
 
     print(f"Porous Structure Designer v{__version__} - generate ({profile.value})")
     print(f"  Run ID:              {result.run_id}")
@@ -48,6 +57,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
     print(f"  Watertight:          {result.watertight}")
     print(f"  Solid components:    {result.solid_components}")
     print(f"  STL:                 {result.stl_path}")
+    if result.optimization:
+        print(f"  Optimization:        {result.optimization.profile.value} ({result.optimization.reason})")
+        print(f"  Recommended STL:     {result.optimization.recommended_path}")
     print(f"  Timing (s):          total={result.timing.total_s:.1f}  "
           f"tune={result.timing.tuning_s:.1f}  voxel={result.timing.voxel_generation_s:.1f}  "
           f"mc={result.timing.marching_cubes_s:.1f}  val={result.timing.validation_s:.1f}")
@@ -58,6 +70,50 @@ def cmd_generate(args: argparse.Namespace) -> int:
         print(f"  WARNING: {result.tuning.message}")
 
     return 0 if result.success else 1
+
+
+def cmd_estimate(args: argparse.Namespace) -> int:
+    spec_path = Path(args.spec)
+    spec = _load_spec(spec_path, args.yaml)
+    profile = GenerationProfile(args.profile)
+    resolution = (
+        spec.generation.preview_resolution_mm
+        if profile == GenerationProfile.PREVIEW
+        else spec.generation.reference_resolution_mm
+        if profile == GenerationProfile.REFERENCE
+        else spec.generation.final_resolution_mm
+    )
+    estimate = estimate_resources(spec, resolution)
+    print(json.dumps(estimate.to_dict(), indent=2))
+    return 1 if estimate.status.value == "infeasible" else 0
+
+
+def cmd_sensitivity(args: argparse.Namespace) -> int:
+    spec = _load_spec(Path(args.spec), args.yaml)
+    resolutions = [float(x) for x in args.resolutions.split(",")]
+    result = run_resolution_sensitivity(spec, resolutions=resolutions)
+    print(f"Sensitivity written to {result.output_dir}")
+    for key, value in result.status.items():
+        print(f"  {key}: {value}")
+    return 0 if result.rows else 1
+
+
+def cmd_optimize_mesh(args: argparse.Namespace) -> int:
+    path = Path(args.stl)
+    if not path.exists():
+        print(f"ERROR: file not found: {path}", file=sys.stderr)
+        return 1
+    mesh = trimesh.load(path, force="mesh")
+    optimized = path.with_name(path.stem + "_optimized.stl")
+    result, _export = optimize_and_validate_mesh(
+        mesh,
+        master_path=path,
+        optimized_path=optimized,
+        domain_volume_mm3=float(args.domain_volume) if args.domain_volume else abs(float(mesh.volume)),
+        profile=OptimizationProfile(args.profile),
+    )
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.accepted or result.profile == OptimizationProfile.NONE else 1
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -113,6 +169,16 @@ def main(argv: list[str] | None = None) -> int:
     p_gen.add_argument("spec", help="Specification file path")
     p_gen.add_argument("--yaml", action="store_true")
     p_gen.add_argument("--preview", action="store_true", help="Fast low-resolution preview profile")
+    p_gen.add_argument(
+        "--profile",
+        choices=[p.value for p in GenerationProfile],
+        default=GenerationProfile.FINAL.value,
+    )
+    p_gen.add_argument(
+        "--optimization",
+        choices=[p.value for p in OptimizationProfile],
+        default=OptimizationProfile.NONE.value,
+    )
     p_gen.set_defaults(func=cmd_generate)
 
     p_val = sub.add_parser("validate", help="Validate an STL file")
@@ -123,6 +189,24 @@ def main(argv: list[str] | None = None) -> int:
     p_ins = sub.add_parser("inspect-run", help="Inspect a run directory")
     p_ins.add_argument("run_dir", help="Path to runs/<run_id>")
     p_ins.set_defaults(func=cmd_inspect_run)
+
+    p_est = sub.add_parser("estimate", help="Estimate memory/runtime before generation")
+    p_est.add_argument("spec")
+    p_est.add_argument("--yaml", action="store_true")
+    p_est.add_argument("--profile", choices=[p.value for p in GenerationProfile], default="final")
+    p_est.set_defaults(func=cmd_estimate)
+
+    p_sens = sub.add_parser("sensitivity", help="Run resolution-sensitivity analysis")
+    p_sens.add_argument("spec")
+    p_sens.add_argument("--yaml", action="store_true")
+    p_sens.add_argument("--resolutions", default="0.10,0.06,0.04")
+    p_sens.set_defaults(func=cmd_sensitivity)
+
+    p_opt = sub.add_parser("optimize-mesh", help="Optimize and validate an STL candidate")
+    p_opt.add_argument("stl")
+    p_opt.add_argument("--profile", choices=[p.value for p in OptimizationProfile], default="conservative")
+    p_opt.add_argument("--domain-volume", type=float, default=None)
+    p_opt.set_defaults(func=cmd_optimize_mesh)
 
     args = parser.parse_args(argv)
     configure_logging(level="DEBUG" if args.verbose else "INFO", json_output=args.json_log)

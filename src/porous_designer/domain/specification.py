@@ -175,6 +175,7 @@ class ManufacturingSpec(BaseModel):
 class GenerationSpec(BaseModel):
     preview_resolution_mm: float = Field(default=0.10, gt=0)
     final_resolution_mm: float = Field(default=0.04, gt=0)
+    reference_resolution_mm: float = Field(default=0.03, gt=0)
     maximum_memory_gb: float = Field(default=16.0, gt=0)
     maximum_runtime_s: float = Field(default=600.0, gt=0)
     deterministic_seed: int = Field(default=42)

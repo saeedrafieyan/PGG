@@ -28,7 +28,10 @@ from typing import Sequence
 
 import numpy as np
 
-from porous_designer.domain.enums import StructureFamily
+from porous_designer.domain.enums import DomainShape, StructureFamily
+from porous_designer.domain.specification import DesignSpecification
+from porous_designer.generators.base import GeneratedField, ParameterDefinition, PorousGenerator
+from porous_designer.geometry.domains import DomainGrid
 
 _DEDUP_TOL = 1e-9
 
@@ -197,3 +200,79 @@ def nearest_neighbor_distances(centers: np.ndarray, k: int = 2) -> np.ndarray:
     if d.ndim == 1:
         return d
     return d[:, 1] if k >= 2 else d
+
+
+class SphereLatticeGenerator(PorousGenerator):
+    """Adapter from sphere-center lattices to the unified generator interface."""
+
+    control_parameter = "lattice_spacing_mm"
+    monotonic_decreasing = True
+    parameter_definitions = (
+        ParameterDefinition(
+            "pore_diameter_mm",
+            "mm",
+            "Generating sphere diameter before clipping and overlap.",
+        ),
+        ParameterDefinition(
+            "lattice_spacing_mm",
+            "mm",
+            "Nearest-neighbor sphere-center spacing tuned to control porosity.",
+        ),
+    )
+    known_limitations = (
+        "Throat size is not explicitly measured in Phase 2B.",
+        "Porosity is computed inside the finite clipped domain.",
+    )
+
+    def __init__(self, family: StructureFamily) -> None:
+        if not family.is_sphere_lattice:
+            raise ValueError(f"Not a sphere lattice family: {family.value}")
+        self.family = family
+        self.lattice = LatticeType.from_family(family)
+
+    def default_search_interval(self, spec: DesignSpecification) -> tuple[float, float]:
+        pore = spec.structure.pore_diameter_mm
+        if pore is None:
+            raise ValueError(f"{self.family.value} requires pore_diameter_mm")
+        return (0.5 * pore, 3.0 * pore)
+
+    def generate_voxels(
+        self,
+        spec: DesignSpecification,
+        domain_grid: DomainGrid,
+        control_parameter: float,
+    ) -> GeneratedField:
+        from porous_designer.geometry.voxel import sphere_solid_grid
+
+        pore = spec.structure.pore_diameter_mm
+        if pore is None:
+            raise ValueError(f"{self.family.value} requires pore_diameter_mm")
+        center_predicate = None
+        if spec.domain.shape == DomainShape.CYLINDER and not spec.constraints.require_open_pores:
+            radius = pore / 2.0
+            diameter, height = spec.domain.dimensions_mm
+            domain_radius = diameter / 2.0
+            cx0 = cy0 = domain_radius
+
+            def center_predicate(c: np.ndarray) -> bool:
+                radial = math.hypot(float(c[0]) - cx0, float(c[1]) - cy0)
+                return radial <= domain_radius - radius and radius <= float(c[2]) <= height - radius
+
+        grid, center_count = sphere_solid_grid(
+            domain_grid.bounds_mm,
+            domain_grid.voxel_mm,
+            pore / 2.0,
+            control_parameter,
+            self.lattice,
+            domain_mask=domain_grid.mask,
+            return_center_count=True,
+            center_predicate=center_predicate,
+        )
+        return GeneratedField(
+            solid_grid=grid,
+            control_parameter=control_parameter,
+            generator_metrics={
+                "sphere_center_count": center_count,
+                "lattice": self.lattice.value,
+            },
+        )

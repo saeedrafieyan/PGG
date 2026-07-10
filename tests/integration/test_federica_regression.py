@@ -64,7 +64,7 @@ def test_federica_regression(federica_spec):
     assert (result.run_dir / "validation_report.json").exists()
     assert (result.run_dir / "checksums.json").exists()
     checksums = json.loads((result.run_dir / "checksums.json").read_text())
-    assert checksums["step_status"] == "disabled_phase_2a"
+    assert checksums["step_status"] in {"disabled_phase_2a", "disabled_phase_2b"}
     assert checksums["legacy_federica_step_fixture"]["validation_status"] == "FAILED"
 
 

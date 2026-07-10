@@ -41,12 +41,15 @@ def _percolates(void: np.ndarray, axis: int) -> bool:
     return bool(low & high)
 
 
-def analyze_void_connectivity(void_grid: np.ndarray) -> ConnectivityMetrics:
+def analyze_void_connectivity(void_grid: np.ndarray, domain_mask: np.ndarray | None = None) -> ConnectivityMetrics:
     """Analyze pore-phase connectivity on a boolean void grid inside the domain."""
-    void = void_grid.astype(bool)
+    if domain_mask is None:
+        domain_mask = np.ones_like(void_grid, dtype=bool)
+    void = void_grid.astype(bool) & domain_mask
     pore_labels, pore_count = ndimage.label(void)
     solid_structure = np.ones((3, 3, 3), dtype=int)
-    solid_labels, solid_count = ndimage.label(~void, structure=solid_structure)
+    solid = (~void) & domain_mask
+    solid_labels, solid_count = ndimage.label(solid, structure=solid_structure)
 
     pore_sizes = np.bincount(pore_labels.ravel())
     if len(pore_sizes) > 1:
@@ -58,7 +61,7 @@ def analyze_void_connectivity(void_grid: np.ndarray) -> ConnectivityMetrics:
     solid_sizes = np.bincount(solid_labels.ravel())
     if len(solid_sizes) > 1:
         solid_sizes[0] = 0
-        solid_total = int((~void).sum())
+        solid_total = int(solid.sum())
         largest_solid_frac = float(solid_sizes.max() / solid_total) if solid_total > 0 else 0.0
     else:
         largest_solid_frac = 0.0
