@@ -1,0 +1,9 @@
+profiles:
+  generic_fdm:
+    process: fdm
+    minimum_printable_feature_mm: 0.4
+    support_policy: auto
+  generic_sla:
+    process: sla
+    minimum_printable_feature_mm: 0.1
+    support_policy: minimal

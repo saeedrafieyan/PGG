@@ -1,0 +1,19 @@
+schema_version: "1.0"
+generation:
+  preview_resolution_mm: 0.10
+  final_resolution_mm: 0.04
+  maximum_memory_gb: 16.0
+  maximum_runtime_s: 600
+  deterministic_seed: 42
+validation:
+  dimension_tolerance_mm: 0.05
+  porosity_tolerance_default: 0.02
+  minimum_wall_thickness_resolution_factor: 2.0
+repair:
+  max_geometry_retries: 2
+  max_mesh_retries: 2
+  max_step_retries: 2
+  max_engineering_refinements: 5
+logging:
+  level: INFO
+  json: false
