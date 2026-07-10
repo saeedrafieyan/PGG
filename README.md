@@ -1,8 +1,9 @@
-# porousgen — porous-material geometry generator
+# PGG — Porous Geometry Generation
 
-Generate 3D porous structures (STL + STEP) from a plain-text specification.
-Built for lab samples / scaffolds: give it a bounding box, a lattice type, a
-pore size and a target porosity, and it produces printable/CAD-ready files.
+**Porous Structure Designer** — generate 3D porous structures (STL + STEP) from a plain-text specification or structured GUI fields.
+Built for lab samples / scaffolds: give it a bounding box, a lattice type, a pore size and a target porosity, and it produces printable/CAD-ready files.
+
+Repository: [github.com/saeedrafieyan/PGG](https://github.com/saeedrafieyan/PGG)
 
 ## Requirements
 - Python 3 with `numpy`, `scikit-image`, `trimesh` (for STL) and `gmsh` (for STEP).
