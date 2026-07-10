@@ -1,0 +1,8 @@
+# STL-only Federica spec for CLI/examples (STEP disabled in Phase 2A)
+bounding_box: 8 x 14 x 8
+lattice:      hcp
+pore_size:    1.0
+porosity:     75-80%
+formats:      stl
+resolution:   0.04
+output:       federica_scaffold

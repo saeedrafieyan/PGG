@@ -24,6 +24,7 @@ venv/
 ENV/
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 .pytest_cache/
@@ -33,6 +34,11 @@ htmlcov/
 .coverage
 coverage.xml
 runs/
+outputs/
+artifacts/
+*.stl
+*.step
+*.stp
 *.log
 .DS_Store
 Thumbs.db

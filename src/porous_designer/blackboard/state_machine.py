@@ -32,12 +32,14 @@ TRANSITIONS: dict[RunStatus, set[RunStatus]] = {
     RunStatus.FEASIBILITY_CHECKING: {
         RunStatus.INFEASIBLE,
         RunStatus.PREVIEW_GENERATING,
+        RunStatus.FINAL_GENERATING,
         RunStatus.FAILED,
         RunStatus.CANCELLED,
     },
     RunStatus.INFEASIBLE: {RunStatus.NEEDS_USER_REVIEW, RunStatus.CANCELLED},
     RunStatus.PREVIEW_GENERATING: {
         RunStatus.PREVIEW_READY,
+        RunStatus.VALIDATING,
         RunStatus.FAILED,
         RunStatus.CANCELLED,
     },

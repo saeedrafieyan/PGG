@@ -1,0 +1,28 @@
+{
+  "description": "Baseline metrics from original porousgen.py run (2026-07-10) including STEP-tessellated STL",
+  "source_command": "python porousgen.py sample_spec.txt",
+  "step_fixture_status": "FAILED",
+  "step_fixture_reason": "gmsh reimport negative volume (-172.64 mm3); bbox extends outside nominal domain",
+  "original_porousgen_stl": {
+    "runtime_total_s": 238.2,
+    "tuned_spacing_mm": 0.9858,
+    "tuning_grid_porosity": 0.7734,
+    "mesh_porosity": 0.7667,
+    "triangle_count": 1579606,
+    "watertight": true,
+    "solid_components": 1,
+    "bounding_box_mm": [8.0, 14.0, 8.0],
+    "stl_size_mb": 78.98
+  },
+  "phase_2a_voxel_stl_expectations": {
+    "spacing_mm_range": [0.90, 1.05],
+    "spacing_must_not_equal_hardcoded": 0.9858,
+    "porosity_mesh_range": [0.74, 0.81],
+    "porosity_voxel_range": [0.74, 0.81],
+    "triangle_count_range": [200000, 8000000],
+    "watertight": true,
+    "solid_components": 1,
+    "dimension_tolerance_mm": 0.05,
+    "note": "Triangle count differs from STEP-tessellated baseline; voxel marching-cubes STL is the Phase 2A reference"
+  }
+}

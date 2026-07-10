@@ -8,7 +8,10 @@ generation:
 validation:
   dimension_tolerance_mm: 0.05
   porosity_tolerance_default: 0.02
+  max_porosity_method_disagreement: 0.03
+  porosity_disagreement_policy: fail
   minimum_wall_thickness_resolution_factor: 2.0
+  minimum_solid_component_voxels: 8
 repair:
   max_geometry_retries: 2
   max_mesh_retries: 2

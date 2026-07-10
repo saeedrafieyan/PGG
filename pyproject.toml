@@ -33,7 +33,6 @@ llm = [
 ]
 dev = [
     "pytest>=8.0",
-    "pytest-qt>=4.4",
     "pytest-timeout>=2.3",
 ]
 all = ["porous-designer[gui,llm,dev]"]
@@ -48,7 +47,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-p no:pytest_qt"
+addopts = "-p no:pytestqt"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "gui: marks tests requiring PySide6",

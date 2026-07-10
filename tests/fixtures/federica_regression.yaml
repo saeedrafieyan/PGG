@@ -1,0 +1,34 @@
+# Federica HCP regression specification (compact fixture — no binary geometry)
+schema_version: "1.0"
+source_text: "Federica regression fixture"
+domain:
+  shape: box
+  dimensions_mm: [8.0, 14.0, 8.0]
+  origin_convention: corner_at_origin
+  orientation: z_up
+structure:
+  family: hcp_spherical_pores
+  pore_definition:
+    definition_type: spherical
+  pore_diameter_mm: 1.0
+  periodicity: true
+targets:
+  porosity_target:
+    target: 0.775
+    tolerance: 0.025
+    min_value: 0.75
+    max_value: 0.80
+constraints:
+  require_open_pores: true
+  require_single_solid_component: true
+  allowed_dimension_tolerance_mm: 0.05
+generation:
+  preview_resolution_mm: 0.10
+  final_resolution_mm: 0.04
+  deterministic_seed: 42
+export:
+  formats: [stl]
+  output_directory: runs
+  output_name: federica_scaffold
+metadata:
+  created_by: regression_test
