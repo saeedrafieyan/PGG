@@ -1,0 +1,10 @@
+# Porous-material specification (Federica's sample)
+# Any line may carry a trailing "# comment".
+
+bounding_box: 8 x 14 x 8      # mm  (X Y Z)
+lattice:      hcp             # sc | bcc | fcc | hcp | gyroid
+pore_size:    1.0             # mm  (sphere diameter; for gyroid = unit-cell size)
+porosity:     75-80%          # target void fraction (single value or a range)
+formats:      stl, step       # stl and/or step  (step: sphere lattices only)
+resolution:   0.04            # voxel size for meshing / porosity (mm)
+output:       federica_scaffold
