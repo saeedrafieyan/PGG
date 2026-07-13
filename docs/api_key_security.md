@@ -5,11 +5,11 @@ Supported keys:
 - `OPENAI_API_KEY`
 - `GEMINI_API_KEY`
 
-Credential priority:
+Credential modes are explicit:
 
-1. current process environment variable
-2. operating-system credential store through `keyring`
-3. unavailable
+- environment variable
+- operating-system credential store through `keyring`
+- session only
 
 Keys are not read from repository files, YAML specifications, run directories,
 logs, CLI arguments, or normal Qt settings.
@@ -19,3 +19,8 @@ manager. Existing keys are never displayed; only source and redacted status are
 shown.
 
 Provider errors and audit files use secret redaction.
+
+Keyring entries use service `PGG Agent Providers` and username `openai` or
+`gemini`. A keyring save is accepted only after immediate readback succeeds.
+Session-only keys are kept in process memory and disappear when the application
+exits.

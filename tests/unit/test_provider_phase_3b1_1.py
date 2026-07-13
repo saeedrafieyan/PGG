@@ -12,7 +12,7 @@ from porous_designer.agentic.deterministic_parser import DeterministicRequestPar
 from porous_designer.agentic.disagreement import detect_provider_disagreements
 from porous_designer.agentic.evaluation import benchmark_cases, evaluate_deterministic
 from porous_designer.agentic.provider import GeminiProvider, MockAgentProvider, OpenAIProvider
-from porous_designer.agentic.provider_config import GEMINI_LOW_COST_MODEL, OPENAI_ESCALATION_MODEL, OPENAI_LOW_COST_MODEL, ProviderSettings
+from porous_designer.agentic.provider_config import CredentialMode, ExternalCallMode, GEMINI_LOW_COST_MODEL, OPENAI_ESCALATION_MODEL, OPENAI_LOW_COST_MODEL, ProviderSettings
 from porous_designer.agentic.provider_errors import classify_provider_exception, redact_secrets
 from porous_designer.agentic.request_parser_agent import RequestParserAgent
 from porous_designer.agentic.orchestrator import AgenticRequestOrchestrator
@@ -102,7 +102,7 @@ def test_gemini_defaults_and_request_construction():
 
 def test_environment_key_discovery_and_redaction(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-testSECRET123456")
-    found = lookup_api_key("openai")
+    found = lookup_api_key("openai", CredentialMode.ENVIRONMENT)
     assert found.available
     assert found.source == "environment"
     assert "SECRET" not in found.redacted_display
@@ -135,7 +135,10 @@ def test_timeout_rate_limit_quota_model_error_classification():
 
 
 def test_malformed_json_schema_mismatch_retry_and_fallback():
-    result = RequestParserAgent(MockAgentProvider(invalid_json=True), settings=ProviderSettings(external_access_enabled=True)).parse("Create a 4 x 4 x 4 mm scaffold with hexagonal packing and pore size 1 mm.")
+    result = RequestParserAgent(
+        MockAgentProvider(invalid_json=True),
+        settings=ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED),
+    ).parse("Create a 4 x 4 x 4 mm scaffold with hexagonal packing and pore size 1 mm.")
     assert result.provider_failed
     assert result.provider_mode == "deterministic_fallback"
 

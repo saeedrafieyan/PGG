@@ -162,13 +162,17 @@ class StructuredProviderBase:
     def _ensure_configured(self) -> None:
         if not self.enabled:
             raise RuntimeError("External agent access is disabled by default.")
-        credential = lookup_api_key(self.env_provider_name)
+        credential = lookup_api_key(self.env_provider_name, self.settings.credential_mode)
         if not credential.available and self.client is None:
             raise RuntimeError(f"{self.name} API key is unavailable.")
 
     def _call_structured(self, request: str, deterministic_evidence: dict, schema: dict) -> Any:
         if self.client is not None:
             return self._call_client(request, deterministic_evidence, schema)
+        self.client = self._create_client()
+        return self._call_client(request, deterministic_evidence, schema)
+
+    def _create_client(self) -> Any:
         raise NotImplementedError(f"{self.name} SDK is optional and no client was supplied.")
 
     def _call_client(self, request: str, deterministic_evidence: dict, schema: dict) -> Any:
@@ -230,6 +234,16 @@ class OpenAIProvider(StructuredProviderBase):
             return getattr(response, "output_text", response)
         return self.client.create(model=self.model, messages=payload, response_format={"type": "json_schema", "json_schema": {"name": "ParsedRequestResult", "schema": schema, "strict": True}})
 
+    def _create_client(self) -> Any:
+        credential = lookup_api_key(self.env_provider_name, self.settings.credential_mode)
+        if not credential.available or not credential.key:
+            raise RuntimeError("OpenAI API key is unavailable.")
+        try:
+            from openai import OpenAI
+        except Exception as exc:
+            raise RuntimeError("OpenAI SDK is not installed or could not be loaded.") from exc
+        return OpenAI(api_key=credential.key, timeout=self.timeout_s)
+
 
 class GeminiProvider(StructuredProviderBase):
     name = "gemini"
@@ -261,6 +275,17 @@ class GeminiProvider(StructuredProviderBase):
             )
             return getattr(response, "text", response)
         return self.client.generate_content(model=self.model, contents=prompt, generation_config={"response_mime_type": "application/json", "response_schema": schema})
+
+    def _create_client(self) -> Any:
+        credential = lookup_api_key(self.env_provider_name, self.settings.credential_mode)
+        if not credential.available or not credential.key:
+            raise RuntimeError("Gemini API key is unavailable.")
+        try:
+            from google import genai
+        except Exception as exc:
+            raise RuntimeError("Google GenAI SDK is not installed or could not be loaded.") from exc
+        return genai.Client(api_key=credential.key)
+
 
 def call_provider_with_timeout(provider: AgentProvider, request: str, deterministic_evidence: dict, schema: dict, *, timeout_s: float = 10.0) -> ParsedRequestResult:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:

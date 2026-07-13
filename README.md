@@ -58,9 +58,15 @@ to the active specification.
 External agent access is disabled by default. Deterministic-only parsing works
 without network credentials.
 
-Phase 3B.1.1 adds optional OpenAI and Gemini provider adapters for structured
-request interpretation. No external LLM is required to use PGG, and external
-access must be explicitly enabled in the GUI provider settings.
+Phase 3B.1.2 adds provider activation controls for optional OpenAI and Gemini
+structured request interpretation. No external LLM is required to use PGG, and
+external access must be explicitly enabled in the GUI provider settings.
+
+Provider settings persist across dialog reopen and application restart. Raw API
+keys are never stored in QSettings and are never repopulated into the password
+field; credential availability is shown separately. The Agentic Request panel
+shows call mode, provider, model, credential status, last decision, and last
+execution.
 
 ## Spec File Format
 
@@ -99,8 +105,8 @@ output:       sample
   geometry or validation metrics.
 - Renderer and OpenGL details are available from the GUI `Diagnostics` action;
   the normal preview panel shows only a compact preview/final status row.
-- LLM assistance, FEA, inverse design, cloud deployment, authentication, and
-  arbitrary CAD code generation are not part of Phase 3B.1.
+- FEA, inverse design, cloud deployment, authentication, autonomous generation,
+  and arbitrary CAD code generation are not part of Phase 3B.1.2.
 
 ## Example
 

@@ -30,7 +30,11 @@ EXAMPLES = [
 
 class AgenticRequestPanel(QWidget):
     parse_requested = Signal(str)
+    external_interpret_requested = Signal(str)
     review_requested = Signal()
+    configure_provider_requested = Signal()
+    test_provider_requested = Signal()
+    deterministic_only_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -55,11 +59,23 @@ class AgenticRequestPanel(QWidget):
         layout.addLayout(buttons)
         self.mode_label = QLabel("Parser mode: Structured-only mode")
         self.provider_label = QLabel("Provider: deterministic parser, no network")
+        self.provider_status = QLabel(
+            "Mode: Deterministic only\nProvider: deterministic\nModel: deterministic\nExternal access: Disabled\nCredential: Not required\nConnection: Not tested\nLast decision: none\nLast execution: none"
+        )
+        self.provider_status.setWordWrap(True)
         self.confidence_label = QLabel("Confidence: no parsed fields")
         self.ambiguity_label = QLabel("Unresolved ambiguities: 0")
-        for label in (self.mode_label, self.provider_label, self.confidence_label, self.ambiguity_label):
+        for label in (self.mode_label, self.provider_label, self.provider_status, self.confidence_label, self.ambiguity_label):
             label.setWordWrap(True)
             layout.addWidget(label)
+        provider_buttons = QHBoxLayout()
+        self.configure_provider_button = QPushButton("Configure")
+        self.test_provider_button = QPushButton("Test")
+        self.external_interpret_button = QPushButton("Interpret with External Model")
+        self.deterministic_only_button = QPushButton("Use Deterministic Only")
+        for button in (self.configure_provider_button, self.test_provider_button, self.external_interpret_button, self.deterministic_only_button):
+            provider_buttons.addWidget(button)
+        layout.addLayout(provider_buttons)
         self.fields_model = ExtractedFieldsModel()
         self.fields_view = QTableView()
         self.fields_view.setModel(self.fields_model)
@@ -75,6 +91,10 @@ class AgenticRequestPanel(QWidget):
         layout.addWidget(self.review_button)
 
         self.parse_button.clicked.connect(lambda: self.parse_requested.emit(self.request_text.toPlainText()))
+        self.external_interpret_button.clicked.connect(lambda: self.external_interpret_requested.emit(self.request_text.toPlainText()))
+        self.configure_provider_button.clicked.connect(self.configure_provider_requested)
+        self.test_provider_button.clicked.connect(self.test_provider_requested)
+        self.deterministic_only_button.clicked.connect(self.deterministic_only_requested)
         self.clear_button.clicked.connect(self.clear)
         self.example_button.clicked.connect(self.load_example)
         self.review_button.clicked.connect(self.review_requested)
@@ -111,3 +131,6 @@ class AgenticRequestPanel(QWidget):
         unresolved = sum(1 for item in result.ambiguities if item.mandatory and not item.resolved_choice)
         self.ambiguity_label.setText(f"Unresolved ambiguities: {unresolved}")
         self.review_button.setEnabled(bool(result.extracted_fields))
+
+    def set_provider_summary(self, summary: str) -> None:
+        self.provider_status.setText(summary)

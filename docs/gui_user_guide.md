@@ -48,6 +48,11 @@ The `Agentic Request` section is agent-assisted, not autonomous. It includes:
 - `Clear`
 - `Load Example`
 - parser mode and provider status
+- provider mode, credential status, last decision, and last execution
+- `Configure`
+- `Test`
+- `Interpret with External Model`
+- `Use Deterministic Only`
 - extracted-field confidence summary
 - unresolved ambiguity count
 - `Review Proposed Specification`
@@ -61,7 +66,15 @@ estimation, but it does not start preview or final generation.
 `Agent Provider Settings` controls optional external interpretation providers.
 The default is deterministic-only with external access disabled. OpenAI and
 Gemini providers are optional and require local credentials. API keys are stored
-only through environment variables or the operating-system credential manager.
+only through environment variables, the operating-system credential manager, or
+session-only memory.
+
+The API-key field is blank after reopening by design. Check the credential
+status row for `Available` or `Not found`.
+
+Use `Interpret with External Model` to force the selected provider path for a
+request. This still runs deterministic extraction first, requires human review,
+and never starts geometry generation.
 
 ## Rendering Presets
 
@@ -102,6 +115,10 @@ and OpenGL extensions are available through `Diagnostics > Rendering`.
 OpenGL extensions are collapsed by default. Use `Copy Rendering Diagnostics` or
 `Save Diagnostics` when filing a rendering issue.
 
+Provider activation details are available through `Diagnostics > Agent
+Provider`. Use `Copy Provider Diagnostics` when filing provider issues; secrets
+are redacted.
+
 ## Large Final Meshes
 
 The GUI does not automatically load large final STLs. Use run history or output
@@ -110,4 +127,4 @@ folders to explicitly inspect final artifacts.
 ## Disabled Features
 
 STEP, FEA, inverse design, cloud deployment, authentication, arbitrary CAD code
-generation, and autonomous geometry generation are disabled in Phase 3B.1.
+generation, and autonomous geometry generation are disabled in Phase 3B.1.2.

@@ -3,17 +3,36 @@
 from __future__ import annotations
 
 from porous_designer.agentic.contracts import ExternalCallDecision, ExternalCallDecisionCode, ParsedRequestResult
+from porous_designer.agentic.provider_config import ExternalCallMode
 
 
-def decide_external_call(parsed: ParsedRequestResult, *, external_access_enabled: bool) -> ExternalCallDecision:
+def decide_external_call(parsed: ParsedRequestResult, *, external_access_enabled: bool, external_call_mode: ExternalCallMode = ExternalCallMode.WHEN_RECOMMENDED) -> ExternalCallDecision:
     unresolved_fields = [m.field_path for m in parsed.missing_requirements if m.severity == "blocking"]
     unresolved_ambiguities = [a.identifier for a in parsed.ambiguities if a.mandatory and not a.resolved_choice]
     unsupported = [u.feature for u in parsed.unsupported_requests]
     conflicts: list[str] = []
+    if external_call_mode == ExternalCallMode.DETERMINISTIC_ONLY:
+        return ExternalCallDecision(
+            decision_code=ExternalCallDecisionCode.EXTERNAL_ACCESS_DISABLED,
+            explanation="External call mode is Deterministic only.",
+            unresolved_fields=unresolved_fields,
+            unresolved_ambiguities=unresolved_ambiguities,
+            unsupported_requests=unsupported,
+            human_review_required=True,
+        )
     if not external_access_enabled:
         return ExternalCallDecision(
             decision_code=ExternalCallDecisionCode.EXTERNAL_ACCESS_DISABLED,
             explanation="External access disabled; continuing with deterministic extraction and human review.",
+            unresolved_fields=unresolved_fields,
+            unresolved_ambiguities=unresolved_ambiguities,
+            unsupported_requests=unsupported,
+            human_review_required=True,
+        )
+    if external_call_mode == ExternalCallMode.ALWAYS:
+        return ExternalCallDecision(
+            decision_code=ExternalCallDecisionCode.EXTERNAL_CALL_RECOMMENDED,
+            explanation="External call mode is Always use external interpretation.",
             unresolved_fields=unresolved_fields,
             unresolved_ambiguities=unresolved_ambiguities,
             unsupported_requests=unsupported,

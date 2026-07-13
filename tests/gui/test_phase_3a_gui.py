@@ -10,8 +10,9 @@ from pathlib import Path
 import pytest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
-from porous_designer.agentic.contracts import FieldReviewDecision
-from porous_designer.agentic.provider_config import ProviderSettings
+from porous_designer.agentic.contracts import FieldReviewDecision, ProviderMode
+from porous_designer.agentic.credentials import CredentialLookupResult
+from porous_designer.agentic.provider_config import CredentialMode, ExternalCallMode, ProviderSettings
 from porous_designer.domain.enums import DomainShape, StructureFamily
 from porous_designer.domain.specification import (
     ConstraintsSpec,
@@ -289,12 +290,15 @@ def test_rendering_diagnostics_dialog_copy_save_refresh(qtbot, tmp_path: Path, m
     dialog = window._diagnostics_dialog
     qtbot.addWidget(dialog)
     assert dialog.tabs.tabText(1) == "Rendering"
+    assert dialog.tabs.tabText(2) == "Agent Provider"
     assert not dialog.extensions_group.isChecked()
     assert not dialog.extensions_text.isVisible()
     assert "Active preset" in dialog.rendering_summary.toPlainText()
 
     dialog.copy_rendering_diagnostics()
     assert "Active preset" in QApplication.clipboard().text()
+    dialog.copy_provider_diagnostics()
+    assert "external_access_enabled" in QApplication.clipboard().text()
 
     target = tmp_path / "diagnostics.txt"
     monkeypatch.setattr(
@@ -518,7 +522,7 @@ def test_provider_selector_model_category_and_missing_key(qtbot, monkeypatch):
     dialog.provider.setCurrentText("OpenAI")
     assert dialog.model.currentText() == "gpt-5.6-luna"
     assert dialog.model_category.text() == "Low cost"
-    assert "Key unavailable" in dialog.key_source.text()
+    assert "Stored key:" in dialog.key_source.text()
 
 
 def test_provider_settings_secure_key_storage_and_delete(qtbot, monkeypatch):
@@ -527,20 +531,35 @@ def test_provider_settings_secure_key_storage_and_delete(qtbot, monkeypatch):
     def fake_store(provider, key):
         stored[provider] = key
 
+    def fake_lookup(provider, mode):
+        return CredentialLookupResult(provider in stored, mode.value, "sk-t...cret" if provider in stored else "", stored.get(provider), backend="FakeKeyring", message="Stored key: Available" if provider in stored else "Stored key: Not found")
+
     def fake_delete(provider):
         stored.pop(provider, None)
 
     monkeypatch.setattr("porous_designer.gui.dialogs.provider_settings_dialog.store_api_key", fake_store)
+    monkeypatch.setattr("porous_designer.gui.dialogs.provider_settings_dialog.lookup_api_key", fake_lookup)
     monkeypatch.setattr("porous_designer.gui.dialogs.provider_settings_dialog.delete_api_key", fake_delete)
-    dialog = ProviderSettingsDialog(ProviderSettings())
+    dialog = ProviderSettingsDialog(ProviderSettings(credential_mode=CredentialMode.KEYRING))
     qtbot.addWidget(dialog)
     dialog.provider.setCurrentText("OpenAI")
+    dialog.external_access.setChecked(True)
     dialog.api_key.setText("sk-test-secret")
-    dialog._store_key()
+    dialog._save_or_apply(close=False)
     assert stored["openai"] == "sk-test-secret"
     assert dialog.api_key.text() == ""
+    assert "Stored key: Available" in dialog.key_source.text()
     dialog._delete_key()
     assert "openai" not in stored
+
+
+def test_provider_dialog_cancel_discards_unsaved_key(qtbot):
+    dialog = ProviderSettingsDialog(ProviderSettings(provider_mode=ProviderMode.OPENAI))
+    qtbot.addWidget(dialog)
+    dialog.provider.setCurrentText("OpenAI")
+    dialog.api_key.setText("sk-unsaved-secret")
+    dialog._cancel()
+    assert dialog.api_key.text() == ""
 
 
 def test_provider_connection_failure_display(qtbot):
@@ -559,7 +578,31 @@ def test_agentic_call_decision_display_and_no_external_call(qtbot):
     result = window.agentic.last_result
     assert result is not None
     assert result.provider_metadata["external_call_decision"]["decision_code"] in {"EXTERNAL_ACCESS_DISABLED", "NO_EXTERNAL_CALL_REQUIRED"}
+    assert "Last decision:" in window.agentic_request_panel.provider_status.text()
     assert window.controller.worker is None
+
+
+def test_provider_rebuild_and_deterministic_only_button(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    settings = ProviderSettings(external_access_enabled=True, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED)
+    settings.provider_mode = ProviderMode.OPENAI
+    settings.bump_version()
+    window._provider_settings_changed(settings)
+    assert window.agentic.settings is settings
+    assert "Provider: openai" in window.agentic_request_panel.provider_status.text()
+    window._use_deterministic_only()
+    assert "Provider: deterministic" in window.agentic_request_panel.provider_status.text()
+    assert not window.provider_settings.external_access_enabled
+
+
+def test_provider_diagnostics_redacts_key(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._last_provider_fallback = "authentication failed for sk-testSECRET123456"
+    text = window._provider_diagnostics_text()
+    assert "sk-testSECRET123456" not in text
+    assert "[REDACTED]" in text
 
 
 @pytest.mark.slow

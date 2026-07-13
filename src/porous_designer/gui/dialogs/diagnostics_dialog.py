@@ -25,10 +25,11 @@ from porous_designer.gui.rendering import rendering_diagnostics_text
 
 
 class DiagnosticsDialog(QDialog):
-    def __init__(self, runtime_text: Callable[[], str], rendering_model: Callable[[], dict[str, Any]], parent=None) -> None:
+    def __init__(self, runtime_text: Callable[[], str], rendering_model: Callable[[], dict[str, Any]], parent=None, *, provider_text: Callable[[], str] | None = None) -> None:
         super().__init__(parent)
         self._runtime_text = runtime_text
         self._rendering_model = rendering_model
+        self._provider_text = provider_text or (lambda: "Agent provider diagnostics unavailable.")
         self.setWindowTitle("PGG Diagnostics")
         self.resize(760, 640)
         self._build_ui()
@@ -63,6 +64,11 @@ class DiagnosticsDialog(QDialog):
         self.extensions_group.toggled.connect(self.extensions_text.setVisible)
         rendering_layout.addWidget(self.extensions_group)
         self.tabs.addTab(rendering_tab, "Rendering")
+
+        self.provider_summary = QPlainTextEdit()
+        self.provider_summary.setReadOnly(True)
+        self.provider_summary.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.tabs.addTab(self.provider_summary, "Agent Provider")
         layout.addWidget(self.tabs)
 
         self.path_label = QLabel("")
@@ -70,10 +76,12 @@ class DiagnosticsDialog(QDialog):
 
         buttons = QHBoxLayout()
         self.copy_button = QPushButton("Copy Rendering Diagnostics")
+        self.copy_provider_button = QPushButton("Copy Provider Diagnostics")
         self.save_button = QPushButton("Save Diagnostics")
         self.refresh_button = QPushButton("Refresh")
         self.close_button = QPushButton("Close")
         buttons.addWidget(self.copy_button)
+        buttons.addWidget(self.copy_provider_button)
         buttons.addWidget(self.save_button)
         buttons.addStretch()
         buttons.addWidget(self.refresh_button)
@@ -81,6 +89,7 @@ class DiagnosticsDialog(QDialog):
         layout.addLayout(buttons)
 
         self.copy_button.clicked.connect(self.copy_rendering_diagnostics)
+        self.copy_provider_button.clicked.connect(self.copy_provider_diagnostics)
         self.save_button.clicked.connect(self.save_diagnostics)
         self.refresh_button.clicked.connect(self.refresh)
         self.close_button.clicked.connect(self.close)
@@ -89,6 +98,7 @@ class DiagnosticsDialog(QDialog):
         model = self._rendering_model()
         self.runtime_text.setPlainText(self._runtime_text())
         self.rendering_summary.setPlainText(self._summary_text(model))
+        self.provider_summary.setPlainText(self._provider_text())
         extensions = model.get("opengl", {}).get("extensions") or []
         self.extensions_text.setPlainText("\n".join(str(item) for item in extensions))
         self.path_label.clear()
@@ -103,6 +113,11 @@ class DiagnosticsDialog(QDialog):
         text = self._full_rendering_text()
         QApplication.clipboard().setText(text)
         gui_event("rendering_diagnostics_copied", character_count=len(text))
+
+    def copy_provider_diagnostics(self) -> None:
+        text = self._provider_text()
+        QApplication.clipboard().setText(text)
+        gui_event("provider_diagnostics_copied", character_count=len(text))
 
     def save_diagnostics(self) -> Path | None:
         path, _ = QFileDialog.getSaveFileName(self, "Save diagnostics", "pgg_rendering_diagnostics.txt", "Text (*.txt)")
@@ -123,4 +138,4 @@ class DiagnosticsDialog(QDialog):
         return rendering_diagnostics_text(self._rendering_model())
 
     def _full_diagnostics_text(self) -> str:
-        return f"[Runtime]\n{self._runtime_text()}\n\n[Rendering]\n{self._full_rendering_text()}\n"
+        return f"[Runtime]\n{self._runtime_text()}\n\n[Rendering]\n{self._full_rendering_text()}\n\n[Agent Provider]\n{self._provider_text()}\n"

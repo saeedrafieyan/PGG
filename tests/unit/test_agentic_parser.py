@@ -93,9 +93,10 @@ def test_schema_rejects_unknown_field_and_code():
 
 
 def test_invalid_provider_json_and_timeout_fall_back():
-    from porous_designer.agentic.provider_config import ProviderSettings
+    from porous_designer.agentic.contracts import ProviderMode
+    from porous_designer.agentic.provider_config import ExternalCallMode, ProviderSettings
 
-    settings = ProviderSettings(external_access_enabled=True)
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED)
     invalid = RequestParserAgent(MockAgentProvider(invalid_json=True), settings=settings).parse("Generate a 4 x 4 x 4 mm scaffold with hexagonal packing and pore size 1 mm.")
     assert invalid.provider_failed
     assert invalid.provider_mode == "deterministic_fallback"
