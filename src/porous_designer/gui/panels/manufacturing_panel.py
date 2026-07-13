@@ -12,6 +12,8 @@ class ManufacturingPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         layout = QFormLayout(self)
+        layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        layout.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.process = QLineEdit("unknown")
         self.printer = QLineEdit("generic_fdm")
         self.minimum_feature = QDoubleSpinBox()

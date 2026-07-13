@@ -12,6 +12,8 @@ class TargetsPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         layout = QFormLayout(self)
+        layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        layout.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.porosity = QDoubleSpinBox()
         self.porosity.setRange(0.0, 1.0)
         self.porosity.setDecimals(4)

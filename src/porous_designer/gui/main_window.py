@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self.manufacturing_panel = ManufacturingPanel()
         self.generation_panel = GenerationPanel()
         left = QWidget()
+        left.setMinimumWidth(430)
         left_layout = QVBoxLayout(left)
         for title, panel in (
             ("Request", self.request_panel),
@@ -88,6 +89,8 @@ class MainWindow(QMainWindow):
         left_layout.addStretch()
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
+        left_scroll.setMinimumWidth(450)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setWidget(left)
 
         self.preview_panel = PreviewPanel()
@@ -109,7 +112,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(left_scroll)
         splitter.addWidget(self.preview_panel)
         splitter.addWidget(right)
-        splitter.setSizes([360, 620, 420])
+        splitter.setSizes([460, 620, 420])
         self.setCentralWidget(splitter)
 
         self.bottom_tabs = QTabWidget()

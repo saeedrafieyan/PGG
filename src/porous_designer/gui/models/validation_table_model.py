@@ -31,17 +31,32 @@ class ValidationTableModel(QAbstractTableModel):
         if not index.isValid() or role not in (Qt.DisplayRole, Qt.ToolTipRole):
             return None
         row = self._rows[index.row()]
+        status = str(row.get("status", "")).upper()
         values = [
             row.get("name"),
-            row.get("requested_value"),
-            row.get("achieved_value"),
+            self._format_value(row.get("requested_value"), row.get("units")),
+            self._format_value(row.get("achieved_value"), row.get("units")),
             row.get("tolerance"),
-            str(row.get("status", "")).upper(),
+            status,
             row.get("method"),
         ]
         if role == Qt.ToolTipRole:
-            return row.get("message", "")
+            return (
+                f"{row.get('name', '')}\n"
+                f"Status: {status}\n"
+                f"Method: {row.get('method', '')}\n"
+                f"{row.get('message', '')}"
+            )
         return "" if values[index.column()] is None else str(values[index.column()])
+
+    def _format_value(self, value, units: str | None) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, float):
+            text = f"{value:.6g}"
+        else:
+            text = str(value)
+        return f"{text} {units}".strip() if units else text
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
@@ -50,3 +65,23 @@ class ValidationTableModel(QAbstractTableModel):
 
     def row_details(self, row: int) -> dict:
         return self._rows[row] if 0 <= row < len(self._rows) else {}
+
+    def rows_as_csv(self) -> str:
+        import csv
+        import io
+
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow(self.HEADERS)
+        for row in self._rows:
+            writer.writerow(
+                [
+                    row.get("name", ""),
+                    self._format_value(row.get("requested_value"), row.get("units")),
+                    self._format_value(row.get("achieved_value"), row.get("units")),
+                    row.get("tolerance", ""),
+                    str(row.get("status", "")).upper(),
+                    row.get("method", ""),
+                ]
+            )
+        return out.getvalue()

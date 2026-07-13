@@ -12,6 +12,7 @@ def spin(value: float, minimum: float = 0.01, maximum: float = 1000.0, suffix: s
     box.setDecimals(4)
     box.setValue(value)
     box.setSuffix(suffix)
+    box.setMinimumWidth(150)
     return box
 
 
@@ -27,6 +28,8 @@ class DomainPanel(QWidget):
         self.stack = QStackedWidget()
         box_widget = QWidget()
         box_form = QFormLayout(box_widget)
+        box_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        box_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.box_x = spin(4.0)
         self.box_y = spin(4.0)
         self.box_z = spin(4.0)
@@ -35,6 +38,8 @@ class DomainPanel(QWidget):
         box_form.addRow("Z dimension", self.box_z)
         cyl_widget = QWidget()
         cyl_form = QFormLayout(cyl_widget)
+        cyl_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        cyl_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.cyl_diameter = spin(4.0)
         self.cyl_height = spin(6.0)
         self.axis = QComboBox()

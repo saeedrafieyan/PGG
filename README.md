@@ -80,6 +80,8 @@ output:       sample
   failure is resolved.
 - Wall thickness and throat size are shown as unsupported in the Phase 3A GUI.
 - Large final STLs are not loaded automatically by the GUI.
+- Preview rendering presets are display-only and do not alter exported STL
+  geometry or validation metrics.
 - LLM assistance, FEA, inverse design, cloud deployment, authentication, and
   arbitrary CAD code generation are not part of Phase 3A.
 

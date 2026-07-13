@@ -25,6 +25,7 @@ from porous_designer.gui.dialogs.error_dialog import ErrorDialog
 from porous_designer.gui.main_window import MainWindow
 from porous_designer.gui.models.run_history_model import RunHistoryStore
 from porous_designer.gui.panels.structure_panel import StructurePanel
+from porous_designer.gui.rendering import PRESETS, preset
 from porous_designer.gui.reporting import generate_html_report
 from porous_designer.gui.state_store import StateStore
 from porous_designer.gui.workers.base_worker import ProcessWorker
@@ -224,6 +225,52 @@ def test_error_dialog_and_step_disabled(qtbot):
     qtbot.addWidget(window)
     assert not window.generation_panel.step_disabled.isEnabled()
     assert "STEP disabled" in window.generation_panel.step_disabled.text()
+
+
+def test_rendering_presets_are_available_and_distinct():
+    assert {"Scientific", "High Contrast", "Light Background", "Wireframe", "Surface + Edges"} <= set(PRESETS)
+    assert preset("Scientific").background_color != preset("Light Background").background_color
+    assert preset("Scientific").mesh_color != "#add8e6"
+
+
+def test_preview_panel_preset_controls_do_not_reload_geometry(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    panel = window.preview_panel
+    before = panel._mesh_path
+    panel.apply_preset("High Contrast")
+    assert panel.settings.preset == "High Contrast"
+    assert panel._mesh_path == before
+
+
+def test_screenshot_sidecar_created_in_fallback(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    with qtbot.waitSignal(window.preview_panel.screenshot_saved, timeout=5000) as blocker:
+        window.preview_panel.save_screenshot()
+    path = Path(blocker.args[0])
+    assert path.exists()
+    assert path.with_suffix(".json").exists()
+
+
+def test_phase_3a2_visual_smoke_screenshots_are_nonuniform():
+    from PIL import Image
+    import numpy as np
+
+    for image_path in (
+        Path("docs/phase_3a2_after_gyroid_scientific.png"),
+        Path("docs/phase_3a2_after_gyroid_light.png"),
+    ):
+        if not image_path.exists():
+            pytest.skip(f"{image_path} has not been captured in this checkout")
+        image = Image.open(image_path).convert("RGB")
+        assert image.width >= 640
+        assert image.height >= 360
+        arr = np.asarray(image)
+        luminance = arr.mean(axis=2)
+        assert float(luminance.std()) > 15.0
+        sample = arr.reshape(-1, 3)[:: max(1, arr.shape[0] * arr.shape[1] // 5000)]
+        assert len(np.unique(sample, axis=0)) > 20
 
 
 def test_preview_failure_is_reported(qtbot):

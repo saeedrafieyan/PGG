@@ -44,3 +44,7 @@ same load and screenshot API.
 
 The application entry point does not force offscreen rendering in normal
 interactive use.
+
+Phase 3A.2 separates visualization settings from scientific specifications.
+Rendering presets and colors are GUI preferences, not `DesignSpecification`
+fields.

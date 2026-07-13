@@ -16,6 +16,8 @@ class RequestPanel(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.output_name = QLineEdit("pgg_scaffold")
         self.output_directory = QLineEdit("runs")
         self.notes = QTextEdit()

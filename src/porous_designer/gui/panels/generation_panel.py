@@ -17,6 +17,8 @@ class GenerationPanel(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.profile = QComboBox()
         self.profile.addItems(["preview", "final", "reference"])
         self.preview_resolution = QDoubleSpinBox()

@@ -36,6 +36,19 @@ Debug logs are written under `logs/`.
 11. Review validation results.
 12. Export the HTML report.
 
+## Rendering Presets
+
+The preview panel includes:
+
+- Scientific
+- High Contrast
+- Light Background
+- Wireframe
+- Surface + Edges
+
+Use `Scientific` for normal inspection and `Light Background` for publication
+screenshots. These settings affect display only.
+
 ## Preview Policy
 
 The preview panel permanently labels preview meshes as:
