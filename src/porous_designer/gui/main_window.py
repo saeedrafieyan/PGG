@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QScrollArea,
     QSplitter,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
 from porous_designer.gui.application_controller import ApplicationController
 from porous_designer.gui.dialogs.about_dialog import show_about
 from porous_designer.gui.dialogs.run_details_dialog import RunDetailsDialog
+from porous_designer.gui.diagnostics import gui_event, runtime_diagnostics
 from porous_designer.gui.models.run_history_model import RunHistoryStore
 from porous_designer.gui.panels.domain_panel import DomainPanel
 from porous_designer.gui.panels.feasibility_panel import FeasibilityPanel
@@ -48,6 +50,7 @@ def group(title: str, widget: QWidget) -> QGroupBox:
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        gui_event("main_window_constructing")
         self.setWindowTitle("PGG, Porous Geometry Generation")
         self.setMinimumSize(1280, 820)
         self.state = StateStore(self)
@@ -56,11 +59,13 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect()
         self._collect_and_validate()
+        gui_event("main_window_constructed")
 
     def _build_ui(self) -> None:
         toolbar = QToolBar("PGG")
         self.addToolBar(toolbar)
         toolbar.addAction("About", lambda: show_about(self))
+        toolbar.addAction("Diagnostics", self._show_diagnostics)
         toolbar.addAction("Open Output Folder", self.controller.open_output_folder)
 
         self.request_panel = RequestPanel()
@@ -158,6 +163,7 @@ class MainWindow(QMainWindow):
         self.progress_label.setText(critical[0].message if critical else "Specification ready")
 
     def _busy_changed(self, busy: bool) -> None:
+        gui_event("busy_changed", busy=busy)
         self.progress_bar.setVisible(busy)
         self.generation_panel.set_busy(busy)
         self.progress_label.setText("Background operation running" if busy else "Ready")
@@ -167,6 +173,7 @@ class MainWindow(QMainWindow):
         self.generation_panel.set_generation_enabled(not self.controller.spec_model.has_invalid_fields, final_allowed)
 
     def _run_completed(self, payload: dict) -> None:
+        gui_event("run_completed_ui", run_id=payload.get("run_id"), profile=payload.get("profile"))
         self.history_panel.refresh(Path("runs"))
         self.progress_label.setText(f"Run {payload.get('run_id')} completed")
         run_dir = Path(payload["run_dir"])
@@ -186,3 +193,14 @@ class MainWindow(QMainWindow):
             self.preview_panel.load_mesh(stl)
         self._run_details_dialog = RunDetailsDialog(run_dir, self)
         self._run_details_dialog.show()
+
+    def _show_diagnostics(self) -> None:
+        QMessageBox.information(self, "PGG Diagnostics", runtime_diagnostics())
+
+    def closeEvent(self, event) -> None:
+        gui_event("main_window_close_requested")
+        if self.controller.worker and self.controller.worker.is_running:
+            self.controller.worker.cancel()
+        self.preview_panel.close_viewer()
+        gui_event("main_window_closed")
+        super().closeEvent(event)

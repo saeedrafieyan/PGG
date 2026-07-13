@@ -13,6 +13,7 @@ from porous_designer.domain.enums import FeasibilityStatus
 from porous_designer.domain.specification import DesignSpecification
 from porous_designer.gui.dialogs.error_dialog import ErrorDialog
 from porous_designer.gui.dialogs.resource_warning_dialog import ResourceWarningDialog
+from porous_designer.gui.diagnostics import gui_event
 from porous_designer.gui.models.run_history_model import RunHistoryStore
 from porous_designer.gui.models.specification_model import FieldIssue, SpecificationModel
 from porous_designer.gui.reporting import generate_html_report
@@ -42,6 +43,7 @@ class ApplicationController(QObject):
         self.last_run_dir: Path | None = None
         self.spec_model.changed.connect(self._specification_updated)
         self.spec_model.validation_changed.connect(self.issues_changed)
+        gui_event("controller_constructed")
 
     @property
     def specification(self) -> DesignSpecification:
@@ -59,23 +61,28 @@ class ApplicationController(QObject):
         self.specification_changed.emit(spec)
 
     def estimate(self) -> dict | None:
+        gui_event("estimate_clicked")
         try:
             spec = self.state.specification
             estimate = estimate_resources(spec, spec.generation.final_resolution_mm).to_dict()
             self.last_estimate = estimate
             self.estimate_changed.emit(estimate)
             self.log.emit("INFO", f"Resource estimate: {estimate['status']} ({estimate['runtime_class']}).")
+            gui_event("estimate_completed", status=estimate.get("status"), voxel_count=estimate.get("voxel_count"))
             return estimate
         except Exception as exc:
+            gui_event("estimate_failed", error=str(exc))
             self.show_error("SPEC_INVALID", str(exc), repr(exc))
             return None
 
     def start_preview(self) -> None:
+        gui_event("preview_clicked", active_worker=bool(self.worker and self.worker.is_running))
         if self.worker and self.worker.is_running:
             return
         self._start_worker(PreviewWorker(self.state.specification, self), "preview")
 
     def start_final(self, parent=None) -> None:
+        gui_event("final_clicked")
         estimate = self.estimate()
         if not estimate:
             return
@@ -92,6 +99,7 @@ class ApplicationController(QObject):
         self.worker = worker
         self.busy_changed.emit(True)
         self.log.emit("INFO", f"Starting {label} generation in a child process.")
+        gui_event("worker_attached", worker_type=label)
         worker.progress.connect(lambda p: self.log.emit("INFO", f"{p.get('stage')}: {p.get('message')}"))
         worker.result.connect(self._worker_result)
         worker.error.connect(lambda e: self.show_error("SPEC_INVALID", e.get("message", ""), e.get("technical_details", "")))
@@ -100,12 +108,14 @@ class ApplicationController(QObject):
         worker.start()
 
     def cancel(self) -> None:
+        gui_event("cancel_clicked", active_worker=bool(self.worker and self.worker.is_running))
         if self.worker and self.worker.is_running:
             self.worker.cancel()
             self.log.emit("WARNING", "Cancellation requested.")
 
     def _worker_result(self, payload: dict) -> None:
         self.last_run_dir = Path(payload["run_dir"])
+        gui_event("worker_result_handling", run_id=payload.get("run_id"), profile=payload.get("profile"))
         self.history.upsert_from_run_dir(self.last_run_dir)
         validation_path = Path(payload.get("validation_report_path", ""))
         if validation_path.exists():
@@ -157,5 +167,6 @@ class ApplicationController(QObject):
             os.startfile(str(self.last_run_dir))
 
     def show_error(self, code: str, message: str, technical_details: str = "") -> None:
+        gui_event("user_error_displayed", code=code, message=message)
         self.log.emit("ERROR", message or code)
         ErrorDialog(code, message, technical_details).exec()

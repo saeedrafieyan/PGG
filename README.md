@@ -37,6 +37,13 @@ python -m porous_designer.gui.app
 launch_pgg_gui.bat
 ```
 
+Debug GUI launch:
+
+```powershell
+python -m porous_designer.gui.app --debug-gui
+launch_pgg_gui.bat --debug-gui
+```
+
 Legacy scripts are preserved for comparison, but new development should use the
 `porous_designer` package.
 

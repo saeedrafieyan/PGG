@@ -12,6 +12,15 @@ or on Windows:
 launch_pgg_gui.bat
 ```
 
+For runtime diagnostics:
+
+```powershell
+python -m porous_designer.gui.app --debug-gui
+launch_pgg_gui.bat --debug-gui
+```
+
+Debug logs are written under `logs/`.
+
 ## Basic Workflow
 
 1. Set the output name and output folder.

@@ -8,6 +8,8 @@ from pathlib import Path
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
+from porous_designer.gui.diagnostics import gui_event
+
 
 class PreviewPanel(QWidget):
     screenshot_saved = Signal(str)
@@ -52,6 +54,7 @@ class PreviewPanel(QWidget):
             self.viewer = QLabel("3D viewer disabled in offscreen test mode.")
             self.viewer.setMinimumHeight(360)
             self.viewer.setAlignment(Qt.AlignCenter)
+            gui_event("preview_viewer_fallback", reason="QT_QPA_PLATFORM=offscreen")
         else:
             try:
                 from pyvistaqt import QtInteractor
@@ -59,10 +62,13 @@ class PreviewPanel(QWidget):
                 self.viewer = QtInteractor(self)
                 self._plotter = self.viewer
                 self._plotter.add_axes()
+                gui_event("preview_viewer_created", widget_parent=bool(self.viewer.parent()))
             except Exception as exc:
-                self.viewer = QLabel(f"PyVista viewer unavailable: {exc}")
+                self.viewer = QLabel("3D preview unavailable")
+                self.viewer.setToolTip(str(exc))
                 self.viewer.setMinimumHeight(360)
                 self.viewer.setAlignment(Qt.AlignCenter)
+                gui_event("preview_viewer_unavailable", error=str(exc))
         layout.addWidget(self.viewer)
         self.reset_button.clicked.connect(self.reset_camera)
         self.iso_button.clicked.connect(lambda: self.view("iso"))
@@ -77,25 +83,34 @@ class PreviewPanel(QWidget):
         if not path:
             return
         self._mesh_path = Path(path)
+        gui_event("preview_mesh_load_requested", path=str(self._mesh_path), plotter=bool(self._plotter))
         if self._plotter is None:
             self.status.setText(f"Preview mesh ready: {self._mesh_path.name}")
             return
-        import pyvista as pv
+        try:
+            import pyvista as pv
 
-        self._plotter.clear()
-        mesh = pv.read(str(self._mesh_path))
-        style = "wireframe" if self.wireframe.isChecked() and not self.surface.isChecked() else "surface"
-        self._mesh_actor = self._plotter.add_mesh(mesh, style=style, show_edges=self.wireframe.isChecked())
-        if self.bbox.isChecked():
-            self._plotter.add_bounding_box()
-        if self.axes.isChecked():
-            self._plotter.add_axes()
-        self._plotter.reset_camera()
-        self.status.setText(f"Preview mesh loaded: {self._mesh_path.name}")
+            self._plotter.clear()
+            mesh = pv.read(str(self._mesh_path))
+            style = "wireframe" if self.wireframe.isChecked() and not self.surface.isChecked() else "surface"
+            self._mesh_actor = self._plotter.add_mesh(mesh, style=style, show_edges=self.wireframe.isChecked())
+            if self.bbox.isChecked():
+                self._plotter.add_bounding_box()
+            if self.axes.isChecked():
+                self._plotter.add_axes()
+            self._plotter.reset_camera()
+            self._plotter.render()
+            self.status.setText(f"Preview mesh loaded: {self._mesh_path.name}")
+            gui_event("preview_mesh_actor_created", actor_valid=bool(self._mesh_actor), actor_count=self.actor_count())
+        except Exception as exc:
+            self.status.setText("3D preview unavailable")
+            gui_event("preview_mesh_load_failed", path=str(self._mesh_path), error=str(exc))
+            raise
 
     def reset_camera(self) -> None:
         if self._plotter:
             self._plotter.reset_camera()
+            self._plotter.render()
 
     def view(self, name: str) -> None:
         if not self._plotter:
@@ -121,3 +136,19 @@ class PreviewPanel(QWidget):
         else:
             target.write_text("Screenshot unavailable in fallback viewer.", encoding="utf-8")
         self.screenshot_saved.emit(str(target))
+
+    def actor_count(self) -> int:
+        if not self._plotter:
+            return 0
+        try:
+            return len(self._plotter.renderer.actors)
+        except Exception:
+            return 0
+
+    def close_viewer(self) -> None:
+        if self._plotter:
+            try:
+                self._plotter.clear()
+                self._plotter.close()
+            except Exception as exc:
+                gui_event("preview_viewer_close_failed", error=str(exc))

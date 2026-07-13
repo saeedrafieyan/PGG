@@ -1,6 +1,6 @@
 # Background Execution
 
-Phase 3A uses Qt signals plus process-backed workers.
+Phase 3A.1 uses Qt signals plus Windows-spawn-safe process-backed workers.
 
 ## Worker Types
 
@@ -19,8 +19,9 @@ running. It does not fake exact percentages.
 ## Cancellation
 
 Cancellation terminates the active child process and emits a structured
-cancellation message. Completed validated artifacts are left untouched. Logs and
-the last valid run artifacts remain in the run directory.
+cancellation message. Unexpected child exits and timeouts are also surfaced as
+structured GUI errors. Completed validated artifacts are left untouched. Logs
+and the last valid run artifacts remain in the run directory.
 
 ## Memory Behavior
 
