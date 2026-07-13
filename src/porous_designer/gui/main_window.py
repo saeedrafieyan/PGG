@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QDialog,
     QDockWidget,
     QGroupBox,
     QLabel,
@@ -20,12 +21,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from porous_designer.agentic.orchestrator import AgenticRequestOrchestrator
 from porous_designer.gui.application_controller import ApplicationController
 from porous_designer.gui.dialogs.about_dialog import show_about
+from porous_designer.gui.dialogs.ambiguity_resolution_dialog import AmbiguityResolutionDialog
 from porous_designer.gui.dialogs.diagnostics_dialog import DiagnosticsDialog
 from porous_designer.gui.dialogs.run_details_dialog import RunDetailsDialog
+from porous_designer.gui.dialogs.specification_review_dialog import SpecificationReviewDialog
 from porous_designer.gui.diagnostics import gui_event, runtime_diagnostics
 from porous_designer.gui.models.run_history_model import RunHistoryStore
+from porous_designer.gui.panels.agentic_request_panel import AgenticRequestPanel
 from porous_designer.gui.panels.domain_panel import DomainPanel
 from porous_designer.gui.panels.feasibility_panel import FeasibilityPanel
 from porous_designer.gui.panels.generation_panel import GenerationPanel
@@ -56,6 +61,8 @@ class MainWindow(QMainWindow):
         self.state = StateStore(self)
         self.history_store = RunHistoryStore(Path("runs") / "pgg_run_history.sqlite")
         self.controller = ApplicationController(self.state, self.history_store, self)
+        self.agentic = AgenticRequestOrchestrator(audit_root=Path("runs"))
+        self._applying_agentic_specification = False
         self._build_ui()
         self._connect()
         self._collect_and_validate()
@@ -69,6 +76,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction("Open Output Folder", self.controller.open_output_folder)
 
         self.request_panel = RequestPanel()
+        self.agentic_request_panel = AgenticRequestPanel()
         self.domain_panel = DomainPanel()
         self.structure_panel = StructurePanel()
         self.targets_panel = TargetsPanel()
@@ -79,6 +87,7 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left)
         for title, panel in (
             ("Request", self.request_panel),
+            ("Agentic Request", self.agentic_request_panel),
             ("Domain", self.domain_panel),
             ("Structure", self.structure_panel),
             ("Targets and Constraints", self.targets_panel),
@@ -133,6 +142,9 @@ class MainWindow(QMainWindow):
     def _connect(self) -> None:
         for panel in (self.request_panel, self.domain_panel, self.structure_panel, self.targets_panel, self.manufacturing_panel, self.generation_panel):
             panel.changed.connect(self._collect_and_validate)
+            panel.changed.connect(self._mark_agentic_approval_stale)
+        self.agentic_request_panel.parse_requested.connect(self._parse_agentic_request)
+        self.agentic_request_panel.review_requested.connect(self._review_agentic_specification)
         self.request_panel.load_requested.connect(lambda: self.controller.load_specification(self))
         self.request_panel.save_requested.connect(lambda: self.controller.save_specification(self))
         self.request_panel.report_requested.connect(lambda: self.controller.export_report(self))
@@ -161,6 +173,99 @@ class MainWindow(QMainWindow):
     def _collect_and_validate(self) -> None:
         valid = self.controller.update_specification_from_fields(self._field_values())
         self.generation_panel.set_generation_enabled(valid)
+
+    def _parse_agentic_request(self, request: str) -> None:
+        request = request.strip()
+        if not request:
+            self.agentic_request_panel.set_result(None, "Request not parsed", self.agentic.provider_status)
+            return
+        gui_event("agentic_parse_requested", character_count=len(request))
+        self.agentic_request_panel.set_busy(True)
+        try:
+            result = self.agentic.parse_request(request, self.controller.specification)
+            self.agentic_request_panel.set_result(result, self.agentic.status.value, self.agentic.provider_status)
+            self.log_panel_message("INFO", f"Agent-assisted request parsed with {len(result.extracted_fields)} proposed fields.")
+        except Exception as exc:
+            gui_event("agentic_parse_failed", error=str(exc))
+            self.agentic_request_panel.set_result(None, "Parser failed", str(exc))
+            self.controller.show_error("SPEC_INVALID", "Agent-assisted request parsing failed.", repr(exc))
+        finally:
+            self.agentic_request_panel.set_busy(False)
+
+    def _review_agentic_specification(self) -> None:
+        parsed = self.agentic.last_result
+        if parsed is None:
+            return
+        mandatory = [item for item in parsed.ambiguities if item.mandatory and not item.resolved_choice]
+        if mandatory:
+            ambiguity_dialog = AmbiguityResolutionDialog(mandatory, self)
+            if ambiguity_dialog.exec() == QDialog.Accepted:
+                resolutions = ambiguity_dialog.resolutions()
+                for item in parsed.ambiguities:
+                    if item.identifier in resolutions:
+                        item.resolved_choice = resolutions[item.identifier]
+            else:
+                return
+        dialog = SpecificationReviewDialog(self.controller.specification, parsed, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        try:
+            approved, record = self.agentic.approve(self.controller.specification, dialog.decisions())
+            self._apply_specification_to_panels(approved)
+            self.state.set_specification(approved)
+            self._collect_and_validate()
+            self.agentic_request_panel.set_result(parsed, self.agentic.status.value, self.agentic.provider_status)
+            self.progress_label.setText("Human approved agent-assisted specification. Feasibility estimate running.")
+            self.controller.estimate()
+            gui_event("agentic_specification_approved", approval_id=record.approval_id)
+        except Exception as exc:
+            gui_event("agentic_approval_failed", error=str(exc))
+            self.controller.show_error("SPEC_INVALID", "Approved agentic specification is invalid.", repr(exc))
+
+    def _apply_specification_to_panels(self, spec) -> None:
+        self._applying_agentic_specification = True
+        try:
+            self.request_panel.output_name.setText(spec.export.output_name)
+            self.request_panel.output_directory.setText(spec.export.output_directory)
+            self.request_panel.notes.setPlainText(spec.source_text)
+            self.domain_panel.shape.setCurrentText(spec.domain.shape.value)
+            if spec.domain.shape.value == "box":
+                self.domain_panel.box_x.setValue(spec.domain.dimensions_mm[0])
+                self.domain_panel.box_y.setValue(spec.domain.dimensions_mm[1])
+                self.domain_panel.box_z.setValue(spec.domain.dimensions_mm[2])
+            else:
+                self.domain_panel.cyl_diameter.setValue(spec.domain.dimensions_mm[0])
+                self.domain_panel.cyl_height.setValue(spec.domain.dimensions_mm[1])
+            label = next((name for name, value in self.structure_panel.FAMILY_LABELS.items() if value == spec.structure.family.value), "SC")
+            self.structure_panel.family.setCurrentText(label)
+            if spec.structure.pore_diameter_mm is not None:
+                self.structure_panel.pore_diameter.setValue(spec.structure.pore_diameter_mm)
+            if spec.structure.unit_cell_size_mm is not None:
+                self.structure_panel.unit_cell.setValue(spec.structure.unit_cell_size_mm)
+            self.targets_panel.porosity.setValue(spec.targets.porosity_target.target)
+            self.targets_panel.tolerance.setValue(spec.targets.porosity_target.tolerance)
+            self.targets_panel.require_open.setChecked(spec.constraints.require_open_pores)
+            self.targets_panel.single_solid.setChecked(spec.constraints.require_single_solid_component)
+            self.generation_panel.preview_resolution.setValue(spec.generation.preview_resolution_mm)
+            self.generation_panel.final_resolution.setValue(spec.generation.final_resolution_mm)
+            self.generation_panel.reference_resolution.setValue(spec.generation.reference_resolution_mm)
+            self.generation_panel.maximum_memory.setValue(spec.generation.maximum_memory_gb)
+            self.generation_panel.maximum_runtime.setValue(spec.generation.maximum_runtime_s)
+            self.manufacturing_panel.process.setText(spec.manufacturing.process)
+            self.manufacturing_panel.printer.setText(spec.manufacturing.printer_profile)
+            self.manufacturing_panel.minimum_feature.setValue(spec.manufacturing.minimum_printable_feature_mm)
+        finally:
+            self._applying_agentic_specification = False
+
+    def _mark_agentic_approval_stale(self) -> None:
+        if self._applying_agentic_specification:
+            return
+        if self.agentic.last_approval is not None:
+            self.agentic.mark_approval_stale()
+            self.agentic_request_panel.set_result(self.agentic.last_result, self.agentic.status.value, self.agentic.provider_status)
+
+    def log_panel_message(self, level: str, message: str) -> None:
+        self.logs_panel.add_log(level, message)
 
     def _issues_changed(self, issues) -> None:
         critical = [i for i in issues if getattr(i, "status", "") == "invalid"]

@@ -31,6 +31,7 @@ class GuiSettings:
     retain_rejected_candidate_meshes: bool = True
     ui_theme: str = "light"
     log_level: str = "INFO"
+    external_agent_access: bool = False
 
 
 def default_specification(settings: GuiSettings | None = None) -> DesignSpecification:

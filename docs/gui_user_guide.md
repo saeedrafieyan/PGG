@@ -30,12 +30,31 @@ runtime and rendering diagnostics, including GPU/OpenGL details.
 4. Enter the relevant geometric fields.
 5. Set target porosity and tolerance.
 6. Choose preview/final resolutions.
-7. Click `Estimate`.
-8. Click `Generate Preview`.
-9. Inspect the preview mesh.
-10. Click `Generate Final` when the estimate is acceptable.
-11. Review validation results.
-12. Export the HTML report.
+7. Optionally use `Agentic Request` to parse a natural-language request.
+8. Review and explicitly approve proposed agent-assisted fields.
+9. Click `Estimate`.
+10. Click `Generate Preview`.
+11. Inspect the preview mesh.
+12. Click `Generate Final` when the estimate is acceptable.
+13. Review validation results.
+14. Export the HTML report.
+
+## Agentic Request
+
+The `Agentic Request` section is agent-assisted, not autonomous. It includes:
+
+- natural-language request text area
+- `Parse Request`
+- `Clear`
+- `Load Example`
+- parser mode and provider status
+- extracted-field confidence summary
+- unresolved ambiguity count
+- `Review Proposed Specification`
+
+Parsing does not change the active specification. Approval requires the review
+dialog. After approval, the GUI runs deterministic validation and feasibility
+estimation, but it does not start preview or final generation.
 
 ## Rendering Presets
 
@@ -84,4 +103,4 @@ folders to explicitly inspect final artifacts.
 ## Disabled Features
 
 STEP, FEA, inverse design, cloud deployment, authentication, arbitrary CAD code
-generation, and LLM assistance are disabled in Phase 3A.
+generation, and autonomous geometry generation are disabled in Phase 3B.1.

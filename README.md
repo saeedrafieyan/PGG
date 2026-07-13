@@ -1,9 +1,10 @@
 # PGG - Porous Geometry Generation
 
-**PGG, Porous Geometry Generation** generates deterministic porous-geometry STL
-artifacts from structured specifications. The Phase 3A desktop GUI is a local
-PySide6 application for internal research workflows; the command-line backend
-remains the authoritative generation and validation engine.
+**PGG, Porous Geometry Generation** is evolving toward an **Agentic
+Porous-Material Design System**. It generates deterministic porous-geometry STL
+artifacts from structured specifications and now includes a human-supervised
+agent-assisted request interpretation workflow. The command-line backend remains
+the authoritative generation and validation engine.
 
 Repository: [github.com/saeedrafieyan/PGG](https://github.com/saeedrafieyan/PGG)
 
@@ -47,6 +48,16 @@ launch_pgg_gui.bat --debug-gui
 Legacy scripts are preserved for comparison, but new development should use the
 `porous_designer` package.
 
+## Agent-Assisted Requests
+
+The GUI includes an `Agentic Request` section. It can parse natural-language
+requests into proposed typed fields, show confidence/evidence, detect
+ambiguities, and require field-by-field human approval before applying anything
+to the active specification.
+
+External agent access is disabled by default. Deterministic-only parsing works
+without network credentials.
+
 ## Spec File Format
 
 The modern backend uses structured YAML matching `DesignSpecification`.
@@ -85,7 +96,7 @@ output:       sample
 - Renderer and OpenGL details are available from the GUI `Diagnostics` action;
   the normal preview panel shows only a compact preview/final status row.
 - LLM assistance, FEA, inverse design, cloud deployment, authentication, and
-  arbitrary CAD code generation are not part of Phase 3A.
+  arbitrary CAD code generation are not part of Phase 3B.1.
 
 ## Example
 

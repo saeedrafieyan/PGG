@@ -28,6 +28,8 @@ class Blackboard(BaseModel):
     run_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: RunStatus = RunStatus.CREATED
     raw_request: str = ""
+    agentic_request: dict[str, Any] = Field(default_factory=dict)
+    specification_review: dict[str, Any] = Field(default_factory=dict)
     parsed_specification: dict[str, Any] | None = None
     approved_specification: dict[str, Any] | None = None
     ambiguities: list[AmbiguityRecord] = Field(default_factory=list)

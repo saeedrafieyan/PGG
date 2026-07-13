@@ -1,0 +1,2 @@
+Review ambiguity candidates as design terminology only. Do not approve the
+specification and do not start geometry generation.

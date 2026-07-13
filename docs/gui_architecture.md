@@ -62,3 +62,15 @@ from `gui.rendering.rendering_diagnostics_model`.
 
 OpenGL extensions are kept in a collapsed read-only text area so long capability
 lists do not resize the main interface or the dialog.
+
+## Agentic Request Interpretation
+
+Phase 3B.1 adds a bounded agent-assisted layer. `AgenticRequestPanel` collects
+natural-language requests and displays parsed fields and ambiguities.
+
+`AgenticRequestOrchestrator` owns parsing, proposed specifications, approval
+records, and audit files. The main window applies approved fields to existing
+GUI panels and then calls the existing deterministic validation/estimate path.
+
+External providers are disabled by default; automated tests use
+`MockAgentProvider` or deterministic-only parsing.

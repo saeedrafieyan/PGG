@@ -1,0 +1,2 @@
+Explain deterministic feasibility results without changing their status. If the
+deterministic result is infeasible, the explanation must say infeasible.

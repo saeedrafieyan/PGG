@@ -8,8 +8,9 @@ import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
+from porous_designer.agentic.contracts import FieldReviewDecision
 from porous_designer.domain.enums import DomainShape, StructureFamily
 from porous_designer.domain.specification import (
     ConstraintsSpec,
@@ -22,6 +23,7 @@ from porous_designer.domain.specification import (
     TargetsSpec,
 )
 from porous_designer.gui.dialogs.error_dialog import ErrorDialog
+from porous_designer.gui.dialogs.specification_review_dialog import SpecificationReviewDialog
 from porous_designer.gui.main_window import MainWindow
 from porous_designer.gui.models.run_history_model import RunHistoryStore
 from porous_designer.gui.panels.structure_panel import StructurePanel
@@ -410,6 +412,92 @@ def test_html_report_generation(qtbot, tmp_path: Path):
     report = generate_html_report(Path(blocker.args[0]["run_dir"]))
     assert report.exists()
     assert "PGG Run Report" in report.read_text(encoding="utf-8")
+
+
+def test_agentic_panel_accepts_text_and_parses_structured_only(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    panel = window.agentic_request_panel
+    panel.request_text.setPlainText("Generate an 8 x 14 x 8 mm scaffold with hexagonal packing and 75-80% porosity.")
+    window._parse_agentic_request(panel.request_text.toPlainText())
+    assert "Structured-only" in panel.provider_label.text()
+    assert panel.fields_model.rowCount() > 0
+    assert panel.review_button.isEnabled()
+    assert window.controller.worker is None
+
+
+def test_agentic_privacy_notice_and_example(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert "External agent access is disabled" in window.agentic_request_panel.privacy_notice.text()
+    window.agentic_request_panel.load_example()
+    assert "scaffold" in window.agentic_request_panel.request_text.toPlainText().lower()
+
+
+def test_specification_review_dialog_reject_and_edit(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    parsed = window.agentic.parse_request("Create a 4 x 4 x 4 mm HCP scaffold with 1 mm generating sphere diameter.", window.controller.specification)
+    dialog = SpecificationReviewDialog(window.controller.specification, parsed)
+    qtbot.addWidget(dialog)
+    dialog.reject_all()
+    assert all(decision.decision == "rejected" for decision in dialog.decisions())
+    dialog.reset_decisions()
+    row = next(i for i, item in enumerate(parsed.extracted_fields) if item.field_path == "structure.pore_diameter_mm")
+    dialog.table.item(row, 2).setText("1.5")
+    dialog._decision_widgets[row].setCurrentText("edited")
+    edited = dialog.decisions()[row]
+    assert edited.decision == "edited"
+    assert edited.edited_value == 1.5
+
+
+def test_agentic_approval_applies_fields_and_does_not_start_preview(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._parse_agentic_request("Create a 10 x 10 x 5 mm HCP scaffold with 1.2 mm generating sphere diameter and 72% porosity.")
+    parsed = window.agentic.last_result
+    assert parsed is not None
+
+    monkeypatch.setattr(
+        "porous_designer.gui.main_window.AmbiguityResolutionDialog.exec",
+        lambda self: QDialog.Accepted,
+    )
+    monkeypatch.setattr(
+        "porous_designer.gui.main_window.AmbiguityResolutionDialog.resolutions",
+        lambda self: {item.identifier: item.recommended_choice for item in parsed.ambiguities},
+    )
+    monkeypatch.setattr(
+        "porous_designer.gui.main_window.SpecificationReviewDialog.exec",
+        lambda self: QDialog.Accepted,
+    )
+    monkeypatch.setattr(
+        "porous_designer.gui.main_window.SpecificationReviewDialog.decisions",
+        lambda self: [FieldReviewDecision(field_path=item.field_path, decision="accepted") for item in parsed.extracted_fields],
+    )
+    estimate_calls = {"count": 0}
+    monkeypatch.setattr(window.controller, "estimate", lambda: estimate_calls.__setitem__("count", estimate_calls["count"] + 1) or {"status": "feasible"})
+    window._review_agentic_specification()
+    assert window.controller.specification.structure.family == StructureFamily.HCP_SPHERICAL_PORES
+    assert window.structure_panel.pore_diameter.value() == pytest.approx(1.2)
+    assert estimate_calls["count"] == 1
+    assert window.controller.worker is None
+
+
+def test_agentic_approval_becomes_stale_after_manual_edit(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._parse_agentic_request("Create a 4 x 4 x 4 mm HCP scaffold with 1 mm generating sphere diameter.")
+    parsed = window.agentic.last_result
+    assert parsed is not None
+    monkeypatch.setattr(window.controller, "estimate", lambda: {"status": "feasible"})
+    approved, record = window.agentic.approve(
+        window.controller.specification,
+        [FieldReviewDecision(field_path=item.field_path, decision="accepted") for item in parsed.extracted_fields],
+    )
+    window._apply_specification_to_panels(approved)
+    window.agentic.last_approval = record
+    window.domain_panel.box_x.setValue(5.0)
+    assert window.agentic.status.value == "Approval stale"
 
 
 @pytest.mark.slow
