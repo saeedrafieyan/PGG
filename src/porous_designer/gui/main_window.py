@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QLabel,
     QMainWindow,
-    QMessageBox,
     QProgressBar,
     QScrollArea,
     QSplitter,
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from porous_designer.gui.application_controller import ApplicationController
 from porous_designer.gui.dialogs.about_dialog import show_about
+from porous_designer.gui.dialogs.diagnostics_dialog import DiagnosticsDialog
 from porous_designer.gui.dialogs.run_details_dialog import RunDetailsDialog
 from porous_designer.gui.diagnostics import gui_event, runtime_diagnostics
 from porous_designer.gui.models.run_history_model import RunHistoryStore
@@ -144,6 +144,7 @@ class MainWindow(QMainWindow):
         self.controller.estimate_changed.connect(self._estimate_changed)
         self.controller.validation_changed.connect(self.validation_panel.set_report)
         self.controller.preview_mesh_ready.connect(self.preview_panel.load_mesh)
+        self.preview_panel.diagnostics_requested.connect(self._show_diagnostics)
         self.controller.run_completed.connect(self._run_completed)
         self.controller.log.connect(self.logs_panel.add_log)
         self.controller.busy_changed.connect(self._busy_changed)
@@ -193,12 +194,16 @@ class MainWindow(QMainWindow):
         if bb.exists():
             data = json.loads(bb.read_text(encoding="utf-8"))
             stl = data.get("artifacts", {}).get("stl") or data.get("artifacts", {}).get("master_stl")
-            self.preview_panel.load_mesh(stl)
+            artifact_state = "final" if data.get("artifacts", {}).get("master_stl") else "preview"
+            self.preview_panel.load_mesh(stl, artifact_state=artifact_state, validation_status=str(data.get("status", "unknown")))
         self._run_details_dialog = RunDetailsDialog(run_dir, self)
         self._run_details_dialog.show()
 
     def _show_diagnostics(self) -> None:
-        QMessageBox.information(self, "PGG Diagnostics", runtime_diagnostics())
+        self._diagnostics_dialog = DiagnosticsDialog(runtime_diagnostics, self.preview_panel.rendering_diagnostics, self)
+        self._diagnostics_dialog.show()
+        self._diagnostics_dialog.raise_()
+        self._diagnostics_dialog.activateWindow()
 
     def closeEvent(self, event) -> None:
         gui_event("main_window_close_requested")

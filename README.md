@@ -82,6 +82,8 @@ output:       sample
 - Large final STLs are not loaded automatically by the GUI.
 - Preview rendering presets are display-only and do not alter exported STL
   geometry or validation metrics.
+- Renderer and OpenGL details are available from the GUI `Diagnostics` action;
+  the normal preview panel shows only a compact preview/final status row.
 - LLM assistance, FEA, inverse design, cloud deployment, authentication, and
   arbitrary CAD code generation are not part of Phase 3A.
 

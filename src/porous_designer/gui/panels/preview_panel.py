@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QDoubleSpinBox,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -31,14 +33,16 @@ from porous_designer.gui.rendering import (
     PRESETS,
     RenderingSettings,
     load_rendering_settings,
+    parse_opengl_capabilities,
     preset,
-    rendering_diagnostics,
+    rendering_diagnostics_model,
     save_rendering_settings,
 )
 
 
 class PreviewPanel(QWidget):
     screenshot_saved = Signal(str)
+    diagnostics_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -48,8 +52,13 @@ class PreviewPanel(QWidget):
             "anti_aliasing": "none",
             "depth_peeling": False,
             "opengl_renderer": "unknown",
+            "opengl": {},
             "fallback": False,
+            "warning": "",
         }
+        self._artifact_state = "preview"
+        self._validation_status = ""
+        self._renderer_diagnostics_logged = False
         self._plotter = None
         self._mesh_actor = None
         self._slice_actor = None
@@ -64,20 +73,139 @@ class PreviewPanel(QWidget):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        controls = QHBoxLayout()
+        layout.setSpacing(6)
+        controls = QGridLayout()
+        controls.setHorizontalSpacing(8)
+        controls.setVerticalSpacing(4)
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(PRESETS.keys())
         self.preset_combo.setCurrentText(self.settings.preset)
+        self.preset_combo.setMinimumWidth(150)
         self.mesh_color_button = QPushButton("Mesh Color")
         self.background_color_button = QPushButton("Background")
         self.edge_color_button = QPushButton("Edge Color")
-        self.reset_rendering_button = QPushButton("Reset Rendering")
+        self.reset_rendering_button = QPushButton("Reset Appearance")
         self.reset_button = QPushButton("Reset Camera")
         self.fit_button = QPushButton("Fit to View")
         self.iso_button = QPushButton("Isometric")
         self.front_button = QPushButton("Front")
         self.side_button = QPushButton("Side")
         self.top_button = QPushButton("Top")
+        for column, widget in enumerate(
+            (
+                self.preset_combo,
+                self.mesh_color_button,
+                self.background_color_button,
+                self.edge_color_button,
+                self.reset_rendering_button,
+                self.reset_button,
+                self.fit_button,
+                self.iso_button,
+                self.front_button,
+                self.side_button,
+                self.top_button,
+            )
+        ):
+            controls.addWidget(widget, 0, column)
+        layout.addLayout(controls)
+
+        display = QGridLayout()
+        display.setHorizontalSpacing(8)
+        display.setVerticalSpacing(4)
+        self.smooth = QCheckBox("Smooth")
+        self.smooth.setChecked(self.settings.smooth_shading)
+        self.edges = QCheckBox("Edges")
+        self.edges.setChecked(self.settings.show_edges)
+        self.bbox = QCheckBox("Bounding Box")
+        self.bbox.setChecked(self.settings.show_bounding_box)
+        self.axes = QCheckBox("Axes")
+        self.axes.setChecked(self.settings.show_axes)
+        self.perspective = QCheckBox("Perspective")
+        self.perspective.setChecked(self.settings.perspective)
+        self.ambient_occlusion = QCheckBox("Ambient Occlusion")
+        self.ambient_occlusion.setChecked(self.settings.ambient_occlusion)
+        self.transparent = QCheckBox("Transparent Exterior")
+        self.transparent.setToolTip("Visualization-only exterior transparency; exported geometry is unchanged.")
+        self.opacity = QDoubleSpinBox()
+        self.opacity.setRange(0.05, 1.0)
+        self.opacity.setSingleStep(0.05)
+        self.opacity.setValue(self.settings.opacity)
+        self.opacity.setToolTip("Visualization-only opacity; exported geometry is unchanged.")
+        self.edge_width = QDoubleSpinBox()
+        self.edge_width.setRange(0.1, 5.0)
+        self.edge_width.setSingleStep(0.1)
+        self.edge_width.setValue(self.settings.edge_width)
+        display_widgets = (
+            self.smooth,
+            self.edges,
+            self.bbox,
+            self.axes,
+            self.perspective,
+            self.ambient_occlusion,
+            self.transparent,
+            QLabel("Opacity"),
+            self.opacity,
+            QLabel("Edge Width"),
+            self.edge_width,
+        )
+        for column, widget in enumerate(display_widgets):
+            display.addWidget(widget, 0, column)
+        layout.addLayout(display)
+
+        clip = QGridLayout()
+        clip.setHorizontalSpacing(8)
+        clip.setVerticalSpacing(4)
+        self.clip_x = QCheckBox("Clip X")
+        self.clip_y = QCheckBox("Clip Y")
+        self.clip_z = QCheckBox("Clip Z")
+        self.invert_clip = QCheckBox("Invert")
+        self.slice_visible = QCheckBox("Slice")
+        self.slice_slider = QSlider(Qt.Horizontal)
+        self.slice_slider.setRange(0, 100)
+        self.slice_slider.setMinimumWidth(120)
+        self.slice_value = QLabel("Plane: 50%")
+        self.reset_clip = QPushButton("Reset Clip")
+        self.operation_label = QLabel("Display operation only")
+        self.operation_label.setToolTip("Clipping and slices affect preview display only; exported geometry is unchanged.")
+        self.screenshot_button = QPushButton("Screenshot")
+        self.screenshot_scale = QSpinBox()
+        self.screenshot_scale.setRange(1, 4)
+        self.screenshot_scale.setValue(2)
+        self.transparent_background = QCheckBox("Transparent PNG")
+        clip_widgets = (
+            self.clip_x,
+            self.clip_y,
+            self.clip_z,
+            self.invert_clip,
+            self.slice_visible,
+            self.slice_slider,
+            self.slice_value,
+            self.reset_clip,
+            self.screenshot_button,
+            QLabel("Scale"),
+            self.screenshot_scale,
+            self.transparent_background,
+            self.operation_label,
+        )
+        for column, widget in enumerate(clip_widgets):
+            clip.addWidget(widget, 0, column)
+        clip.setColumnStretch(5, 1)
+        layout.addLayout(clip)
+
+        self.status_frame = QFrame()
+        self.status_frame.setFrameShape(QFrame.StyledPanel)
+        self.status_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        status_layout = QHBoxLayout(self.status_frame)
+        status_layout.setContentsMargins(8, 3, 8, 3)
+        self.status = QLabel("No preview loaded")
+        self.status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.status.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.open_diagnostics_button = QPushButton("Open Diagnostics")
+        self.open_diagnostics_button.setVisible(False)
+        status_layout.addWidget(self.status)
+        status_layout.addWidget(self.open_diagnostics_button)
+        layout.addWidget(self.status_frame)
+
         for widget in (
             self.preset_combo,
             self.mesh_color_button,
@@ -91,91 +219,7 @@ class PreviewPanel(QWidget):
             self.side_button,
             self.top_button,
         ):
-            controls.addWidget(widget)
-        layout.addLayout(controls)
-
-        display = QHBoxLayout()
-        self.smooth = QCheckBox("Smooth")
-        self.smooth.setChecked(self.settings.smooth_shading)
-        self.edges = QCheckBox("Edges")
-        self.edges.setChecked(self.settings.show_edges)
-        self.bbox = QCheckBox("Bounding box")
-        self.bbox.setChecked(self.settings.show_bounding_box)
-        self.axes = QCheckBox("Axes")
-        self.axes.setChecked(self.settings.show_axes)
-        self.perspective = QCheckBox("Perspective")
-        self.perspective.setChecked(self.settings.perspective)
-        self.ambient_occlusion = QCheckBox("Ambient occlusion")
-        self.ambient_occlusion.setChecked(self.settings.ambient_occlusion)
-        self.transparent = QCheckBox("Transparent Exterior")
-        self.opacity = QDoubleSpinBox()
-        self.opacity.setRange(0.05, 1.0)
-        self.opacity.setSingleStep(0.05)
-        self.opacity.setValue(self.settings.opacity)
-        self.opacity.setToolTip("Visualization-only opacity; exported geometry is unchanged.")
-        self.edge_width = QDoubleSpinBox()
-        self.edge_width.setRange(0.1, 5.0)
-        self.edge_width.setSingleStep(0.1)
-        self.edge_width.setValue(self.settings.edge_width)
-        for widget in (
-            self.smooth,
-            self.edges,
-            self.bbox,
-            self.axes,
-            self.perspective,
-            self.ambient_occlusion,
-            self.transparent,
-            QLabel("Opacity"),
-            self.opacity,
-            QLabel("Edge width"),
-            self.edge_width,
-        ):
-            display.addWidget(widget)
-        layout.addLayout(display)
-
-        clip = QHBoxLayout()
-        self.clip_x = QCheckBox("Clip X")
-        self.clip_y = QCheckBox("Clip Y")
-        self.clip_z = QCheckBox("Clip Z")
-        self.invert_clip = QCheckBox("Invert")
-        self.slice_visible = QCheckBox("Slice")
-        self.slice_slider = QSlider(Qt.Horizontal)
-        self.slice_slider.setRange(0, 100)
-        self.slice_value = QLabel("Plane: 50%")
-        self.reset_clip = QPushButton("Reset Clip")
-        self.operation_label = QLabel("Display operation only, exported geometry unchanged")
-        self.operation_label.setWordWrap(True)
-        for widget in (
-            self.clip_x,
-            self.clip_y,
-            self.clip_z,
-            self.invert_clip,
-            self.slice_visible,
-            self.slice_slider,
-            self.slice_value,
-            self.reset_clip,
-            self.operation_label,
-        ):
-            clip.addWidget(widget)
-        layout.addLayout(clip)
-
-        screenshot = QHBoxLayout()
-        self.screenshot_button = QPushButton("Screenshot")
-        self.screenshot_scale = QSpinBox()
-        self.screenshot_scale.setRange(1, 4)
-        self.screenshot_scale.setValue(2)
-        self.transparent_background = QCheckBox("Transparent PNG")
-        screenshot.addWidget(self.screenshot_button)
-        screenshot.addWidget(QLabel("Scale"))
-        screenshot.addWidget(self.screenshot_scale)
-        screenshot.addWidget(self.transparent_background)
-        layout.addLayout(screenshot)
-
-        self.status = QLabel("Preview only, not final validation")
-        layout.addWidget(self.status)
-        self.diagnostics = QLabel()
-        self.diagnostics.setWordWrap(True)
-        layout.addWidget(self.diagnostics)
+            widget.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
 
     def _init_viewer(self) -> None:
         layout = self.layout()
@@ -184,6 +228,7 @@ class PreviewPanel(QWidget):
             self.viewer.setMinimumHeight(360)
             self.viewer.setAlignment(Qt.AlignCenter)
             self.capabilities["fallback"] = True
+            self.capabilities["warning"] = "3D preview unavailable"
             gui_event("preview_viewer_fallback", reason="QT_QPA_PLATFORM=offscreen")
         else:
             try:
@@ -201,9 +246,11 @@ class PreviewPanel(QWidget):
                 self.viewer.setMinimumHeight(360)
                 self.viewer.setAlignment(Qt.AlignCenter)
                 self.capabilities["fallback"] = True
+                self.capabilities["warning"] = "3D preview unavailable"
                 gui_event("preview_viewer_unavailable", error=str(exc))
-        layout.addWidget(self.viewer)
-        self._update_diagnostics()
+        layout.addWidget(self.viewer, 1)
+        layout.setStretchFactor(self.viewer, 1)
+        self._update_status()
 
     def _connect(self) -> None:
         self.preset_combo.currentTextChanged.connect(self.apply_preset)
@@ -226,6 +273,7 @@ class PreviewPanel(QWidget):
         self.slice_slider.valueChanged.connect(self._slice_changed)
         self.reset_clip.clicked.connect(self._reset_clipping)
         self.screenshot_button.clicked.connect(self.save_screenshot)
+        self.open_diagnostics_button.clicked.connect(self.diagnostics_requested)
 
     def _configure_renderer(self) -> None:
         if not self._plotter:
@@ -241,9 +289,13 @@ class PreviewPanel(QWidget):
         self._apply_projection()
         self._rebuild_lights()
         try:
-            self.capabilities["opengl_renderer"] = self._plotter.ren_win.ReportCapabilities()
+            report = self._plotter.ren_win.ReportCapabilities()
+            self.capabilities["opengl_renderer"] = report
+            self.capabilities["opengl"] = parse_opengl_capabilities(report)
         except Exception:
             self.capabilities["opengl_renderer"] = "unknown"
+            self.capabilities["opengl"] = {}
+        self._log_renderer_diagnostics_once()
 
     def _apply_ambient_occlusion(self) -> None:
         self.capabilities["ambient_occlusion"] = False
@@ -298,6 +350,7 @@ class PreviewPanel(QWidget):
         save_rendering_settings(self.settings)
         self._configure_renderer()
         self._refresh_scene()
+        self._update_status()
 
     def _sync_controls_from_settings(self) -> None:
         for widget, value in (
@@ -341,13 +394,15 @@ class PreviewPanel(QWidget):
             save_rendering_settings(self.settings)
             self._refresh_scene()
 
-    def load_mesh(self, path: str | Path | None) -> None:
+    def load_mesh(self, path: str | Path | None, *, artifact_state: str = "preview", validation_status: str = "") -> None:
         if not path:
             return
+        self._artifact_state = artifact_state
+        self._validation_status = validation_status
         self._mesh_path = Path(path)
         gui_event("preview_mesh_load_requested", path=str(self._mesh_path), plotter=bool(self._plotter))
         if self._plotter is None:
-            self.status.setText(f"Preview mesh ready: {self._mesh_path.name}")
+            self._update_status()
             return
         try:
             import pyvista as pv
@@ -360,6 +415,12 @@ class PreviewPanel(QWidget):
             self._display_mesh = self._make_display_mesh(self._loaded_mesh)
             normals_s = time.perf_counter() - t0
             self._last_timings = {"stl_load_s": load_s, "display_normals_s": normals_s}
+            self.capabilities["mesh"] = {
+                **normal_info,
+                "path": str(self._mesh_path),
+                "filename": self._mesh_path.name,
+                **self._last_timings,
+            }
             gui_event("display_normals_ready", **normal_info, **self._last_timings)
             self._refresh_scene(reset_camera=True)
         except Exception as exc:
@@ -395,7 +456,7 @@ class PreviewPanel(QWidget):
 
     def _refresh_scene(self, reset_camera: bool = False) -> None:
         if not self._plotter or self._display_mesh is None:
-            self._update_diagnostics()
+            self._update_status()
             return
         t0 = time.perf_counter()
         self._plotter.clear()
@@ -433,8 +494,7 @@ class PreviewPanel(QWidget):
             self._plotter.render()
         actor_s = time.perf_counter() - t0
         self._last_timings["actor_render_s"] = actor_s
-        self.status.setText(f"Preview mesh loaded: {self._mesh_path.name if self._mesh_path else ''}")
-        self._update_diagnostics()
+        self._update_status()
         gui_event("preview_scene_refreshed", actor_count=self.actor_count(), **self._last_timings)
 
     def _clipped_mesh(self, mesh):
@@ -551,8 +611,40 @@ class PreviewPanel(QWidget):
         except Exception:
             return 0
 
-    def _update_diagnostics(self) -> None:
-        self.diagnostics.setText(rendering_diagnostics(self.settings, self.capabilities))
+    def rendering_diagnostics(self) -> dict[str, Any]:
+        return rendering_diagnostics_model(self.settings, self.capabilities)
+
+    def _update_status(self) -> None:
+        fallback = bool(self.capabilities.get("fallback"))
+        self.open_diagnostics_button.setVisible(fallback)
+        if self._mesh_path is None:
+            self.status.setText("No preview loaded")
+            return
+        if fallback:
+            self.status.setText("3D preview unavailable")
+            return
+        if self._artifact_state == "final":
+            validation = self._validation_status or "unknown"
+            self.status.setText(f"FINAL ARTIFACT VIEW | Validation status: {validation} | {self._mesh_path.name}")
+            return
+        warning = str(self.capabilities.get("warning") or "Not final validation")
+        self.status.setText(f"PREVIEW | {warning} | {self.settings.preset} | {self._mesh_path.name}")
+
+    def _log_renderer_diagnostics_once(self) -> None:
+        if self._renderer_diagnostics_logged:
+            return
+        model = rendering_diagnostics_model(self.settings, self.capabilities)
+        opengl = model.get("opengl", {})
+        gui_event(
+            "rendering_diagnostics_initialized",
+            preset=model.get("preset"),
+            fallback=model.get("features", {}).get("fallback"),
+            opengl_vendor=opengl.get("vendor"),
+            opengl_renderer=opengl.get("renderer"),
+            opengl_version=opengl.get("version"),
+            opengl_extension_count=len(opengl.get("extensions") or []),
+        )
+        self._renderer_diagnostics_logged = True
 
     def close_viewer(self) -> None:
         if self._plotter:

@@ -48,3 +48,17 @@ interactive use.
 Phase 3A.2 separates visualization settings from scientific specifications.
 Rendering presets and colors are GUI preferences, not `DesignSpecification`
 fields.
+
+Phase 3A.3 separates normal preview status from deep renderer diagnostics.
+`PreviewPanel` exposes a structured rendering diagnostics model for the
+Diagnostics dialog while the normal preview layout displays only a compact
+status row.
+
+## Diagnostics
+
+`DiagnosticsDialog` contains Runtime and Rendering tabs. Runtime diagnostics
+come from `gui.diagnostics.runtime_diagnostics`; rendering diagnostics come
+from `gui.rendering.rendering_diagnostics_model`.
+
+OpenGL extensions are kept in a collapsed read-only text area so long capability
+lists do not resize the main interface or the dialog.

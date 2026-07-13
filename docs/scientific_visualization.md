@@ -31,3 +31,12 @@ Depth perception is improved through:
 - optional transparent exterior mode
 
 These improve inspection only. They do not imply any geometric change.
+
+## Diagnostics Placement
+
+Renderer diagnostics are technical metadata, not part of the scientific
+geometry. Phase 3A.3 keeps the normal preview panel focused on the mesh and a
+compact preview/final status row. Full rendering diagnostics are available in
+`Diagnostics > Rendering`, including the active preset, appearance settings,
+ambient-occlusion method, anti-aliasing, depth peeling, OpenGL fields, package
+versions, and collapsed OpenGL extensions.

@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from porous_designer.domain.enums import DomainShape, StructureFamily
 from porous_designer.domain.specification import (
@@ -241,6 +241,74 @@ def test_preview_panel_preset_controls_do_not_reload_geometry(qtbot):
     panel.apply_preset("High Contrast")
     assert panel.settings.preset == "High Contrast"
     assert panel._mesh_path == before
+
+
+def test_verbose_rendering_diagnostics_absent_from_preview_layout(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    panel_text = window.preview_panel.findChildren(QLabel)
+    visible_text = "\n".join(label.text() for label in panel_text)
+    assert "OpenGL renderer" not in visible_text
+    assert "OpenGL extensions" not in visible_text
+    assert not hasattr(window.preview_panel, "diagnostics")
+
+
+def test_compact_preview_status_before_and_after_preview(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.preview_panel.status.text() == "No preview loaded"
+    window.preview_panel.capabilities["fallback"] = False
+    window.preview_panel.capabilities["warning"] = ""
+    window.preview_panel._mesh_path = Path("runs/example_preview.stl")
+    window.preview_panel._update_status()
+    assert "PREVIEW" in window.preview_panel.status.text()
+    assert "Not final validation" in window.preview_panel.status.text()
+    assert window.preview_panel.settings.preset in window.preview_panel.status.text()
+
+
+def test_final_artifact_status_is_not_called_preview(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.preview_panel.capabilities["fallback"] = False
+    window.preview_panel._mesh_path = Path("runs/final_master.stl")
+    window.preview_panel._artifact_state = "final"
+    window.preview_panel._validation_status = "accepted"
+    window.preview_panel._update_status()
+    assert "FINAL ARTIFACT VIEW" in window.preview_panel.status.text()
+    assert "PREVIEW" not in window.preview_panel.status.text()
+
+
+def test_rendering_diagnostics_dialog_copy_save_refresh(qtbot, tmp_path: Path, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._show_diagnostics()
+    dialog = window._diagnostics_dialog
+    qtbot.addWidget(dialog)
+    assert dialog.tabs.tabText(1) == "Rendering"
+    assert not dialog.extensions_group.isChecked()
+    assert not dialog.extensions_text.isVisible()
+    assert "Active preset" in dialog.rendering_summary.toPlainText()
+
+    dialog.copy_rendering_diagnostics()
+    assert "Active preset" in QApplication.clipboard().text()
+
+    target = tmp_path / "diagnostics.txt"
+    monkeypatch.setattr(
+        "porous_designer.gui.dialogs.diagnostics_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(target), "Text (*.txt)"),
+    )
+    saved = dialog.save_diagnostics()
+    assert saved == target
+    assert "Rendering" in target.read_text(encoding="utf-8")
+    dialog.refresh()
+    assert "Active preset" in dialog.rendering_summary.toPlainText()
+
+
+def test_phase_3a3_toolbar_labels_are_readable(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.preview_panel.reset_rendering_button.text() == "Reset Appearance"
+    assert window.preview_panel.transparent.text() == "Transparent Exterior"
 
 
 def test_screenshot_sidecar_created_in_fallback(qtbot):

@@ -19,7 +19,8 @@ python -m porous_designer.gui.app --debug-gui
 launch_pgg_gui.bat --debug-gui
 ```
 
-Debug logs are written under `logs/`.
+Debug logs are written under `logs/`. The toolbar `Diagnostics` action opens
+runtime and rendering diagnostics, including GPU/OpenGL details.
 
 ## Basic Workflow
 
@@ -51,12 +52,29 @@ screenshots. These settings affect display only.
 
 ## Preview Policy
 
-The preview panel permanently labels preview meshes as:
+Before a mesh is loaded, the preview status reads:
 
-`Preview only, not final validation`
+`No preview loaded`
+
+After preview generation, the preview panel labels meshes with a compact status
+row:
+
+`PREVIEW | Not final validation | <preset> | <filename>`
+
+When a final artifact is explicitly opened from run history, the status uses:
+
+`FINAL ARTIFACT VIEW | Validation status: <status> | <filename>`
 
 Preview metrics are approximate and cannot be accepted as final scientific
 results.
+
+## Rendering Diagnostics
+
+Detailed renderer settings, OpenGL vendor/renderer/version, package versions,
+and OpenGL extensions are available through `Diagnostics > Rendering`.
+
+OpenGL extensions are collapsed by default. Use `Copy Rendering Diagnostics` or
+`Save Diagnostics` when filing a rendering issue.
 
 ## Large Final Meshes
 

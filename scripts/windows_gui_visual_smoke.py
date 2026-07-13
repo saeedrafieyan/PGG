@@ -81,6 +81,17 @@ class VisualSmoke:
             self.window.preview_panel._plotter.screenshot(str(target))
         else:
             self.failed = "PyVistaQt renderer was unavailable."
+        if self.args.window_output:
+            window_target = Path(self.args.window_output)
+            window_target.parent.mkdir(parents=True, exist_ok=True)
+            self.window.grab().save(str(window_target))
+        if self.args.diagnostics_output:
+            diagnostics_target = Path(self.args.diagnostics_output)
+            diagnostics_target.parent.mkdir(parents=True, exist_ok=True)
+            self.window._show_diagnostics()
+            self.window._diagnostics_dialog.tabs.setCurrentIndex(1)
+            self.app.processEvents()
+            self.window._diagnostics_dialog.grab().save(str(diagnostics_target))
         actor_count = self.window.preview_panel.actor_count()
         print(
             f"Visual smoke complete family={self.args.family} actors={actor_count} "
@@ -99,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--family", default="gyroid", choices=[f.value for f in StructureFamily])
     parser.add_argument("--output", default="docs/phase_3a2_visual_smoke.png")
+    parser.add_argument("--window-output", default="")
+    parser.add_argument("--diagnostics-output", default="")
     parser.add_argument("--output-name", default="visual_smoke")
     parser.add_argument("--preset", default="Scientific")
     parser.add_argument("--timeout-ms", type=int, default=60000)
