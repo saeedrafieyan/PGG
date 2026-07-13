@@ -9,7 +9,10 @@ Phase 2B adds optional mesh optimization profiles:
 The pipeline always writes the unmodified master mesh first. An optimized mesh is
 accepted only if it passes hard checks for watertightness, winding consistency,
 positive volume, component count, bounding-box change, volume/porosity change,
-degenerate faces, and deterministic sampled surface deviation.
+degenerate faces, nonmanifold edges, and deterministic bidirectional sampled
+surface deviation.
 
 If optimization is unavailable or fails validation, the master STL remains the
 recommended output. Phase 2B does not use aggressive optimization by default.
+Phase 2C keeps rejected candidate STLs as validation artifacts so failures can
+be inspected without making them accepted outputs.

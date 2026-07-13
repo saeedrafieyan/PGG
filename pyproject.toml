@@ -15,6 +15,7 @@ dependencies = [
     "scipy>=1.11",
     "scikit-image>=0.22",
     "trimesh>=4.0",
+    "fast-simplification>=0.1.13",
     "gmsh>=4.12",
     "pydantic>=2.5",
     "pydantic-settings>=2.0",

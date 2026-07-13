@@ -14,6 +14,13 @@ from porous_designer.domain.specification import DesignSpecification, load_legac
 from porous_designer.logging_config import configure_logging, get_logger
 from porous_designer.services.generation_service import GenerationProfile, generate_porous_stl
 from porous_designer.services.mesh_optimization import OptimizationProfile, optimize_and_validate_mesh
+from porous_designer.services.mesh_optimization import validate_optimization_pair
+from porous_designer.services.phase_2c import (
+    cylinder_accuracy_study,
+    determinism_study,
+    preview_final_consistency,
+    profile_generation,
+)
 from porous_designer.services.resource_estimation import estimate_resources
 from porous_designer.services.sensitivity_service import run_resolution_sensitivity
 from porous_designer.services.validation_service import validate_standalone_stl
@@ -104,7 +111,7 @@ def cmd_optimize_mesh(args: argparse.Namespace) -> int:
         print(f"ERROR: file not found: {path}", file=sys.stderr)
         return 1
     mesh = trimesh.load(path, force="mesh")
-    optimized = path.with_name(path.stem + "_optimized.stl")
+    optimized = path.with_name(path.stem + f"_{args.profile}.stl")
     result, _export = optimize_and_validate_mesh(
         mesh,
         master_path=path,
@@ -114,6 +121,48 @@ def cmd_optimize_mesh(args: argparse.Namespace) -> int:
     )
     print(json.dumps(result.to_dict(), indent=2))
     return 0 if result.accepted or result.profile == OptimizationProfile.NONE else 1
+
+
+def cmd_validate_optimization(args: argparse.Namespace) -> int:
+    result = validate_optimization_pair(
+        Path(args.master),
+        Path(args.candidate),
+        domain_volume_mm3=float(args.domain_volume),
+    )
+    print(json.dumps(result, indent=2))
+    return 0 if result["accepted"] else 1
+
+
+def cmd_determinism(args: argparse.Namespace) -> int:
+    spec = _load_spec(Path(args.spec), args.yaml)
+    result = determinism_study(spec, runs=args.runs)
+    print(json.dumps(result, indent=2))
+    return 0 if result["classification"] in {"bitwise deterministic", "numerically deterministic"} else 1
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    spec = _load_spec(Path(args.spec), args.yaml)
+    result = profile_generation(spec, profile=GenerationProfile(args.profile))
+    print(json.dumps(result, indent=2))
+    return 0 if result["success"] else 1
+
+
+def cmd_preview_consistency(args: argparse.Namespace) -> int:
+    spec = _load_spec(Path(args.spec), args.yaml)
+    result = preview_final_consistency(spec)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_cylinder_accuracy(args: argparse.Namespace) -> int:
+    result = cylinder_accuracy_study(
+        diameter_mm=args.diameter,
+        height_mm=args.height,
+        resolutions=[float(x) for x in args.resolutions.split(",")],
+        output_dir=Path(args.output),
+    )
+    print(json.dumps(result, indent=2))
+    return 0
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -207,6 +256,36 @@ def main(argv: list[str] | None = None) -> int:
     p_opt.add_argument("--profile", choices=[p.value for p in OptimizationProfile], default="conservative")
     p_opt.add_argument("--domain-volume", type=float, default=None)
     p_opt.set_defaults(func=cmd_optimize_mesh)
+
+    p_val_opt = sub.add_parser("validate-optimization", help="Validate master/candidate mesh optimization")
+    p_val_opt.add_argument("master")
+    p_val_opt.add_argument("candidate")
+    p_val_opt.add_argument("--domain-volume", type=float, required=True)
+    p_val_opt.set_defaults(func=cmd_validate_optimization)
+
+    p_det = sub.add_parser("determinism", help="Run repeated deterministic generation")
+    p_det.add_argument("spec")
+    p_det.add_argument("--yaml", action="store_true")
+    p_det.add_argument("--runs", type=int, default=2)
+    p_det.set_defaults(func=cmd_determinism)
+
+    p_prof = sub.add_parser("profile", help="Profile one generation run")
+    p_prof.add_argument("spec")
+    p_prof.add_argument("--yaml", action="store_true")
+    p_prof.add_argument("--profile", choices=[p.value for p in GenerationProfile], default="final")
+    p_prof.set_defaults(func=cmd_profile)
+
+    p_prev = sub.add_parser("preview-consistency", help="Compare preview and final metrics")
+    p_prev.add_argument("spec")
+    p_prev.add_argument("--yaml", action="store_true")
+    p_prev.set_defaults(func=cmd_preview_consistency)
+
+    p_cyl = sub.add_parser("cylinder-accuracy", help="Analyze cylinder voxel-volume convergence")
+    p_cyl.add_argument("--diameter", type=float, required=True)
+    p_cyl.add_argument("--height", type=float, required=True)
+    p_cyl.add_argument("--resolutions", default="0.20,0.10,0.05")
+    p_cyl.add_argument("--output", default="runs/cylinder_accuracy")
+    p_cyl.set_defaults(func=cmd_cylinder_accuracy)
 
     args = parser.parse_args(argv)
     configure_logging(level="DEBUG" if args.verbose else "INFO", json_output=args.json_log)

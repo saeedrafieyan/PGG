@@ -13,6 +13,8 @@ The command runs the deterministic generator at selected resolutions and writes:
 
 It compares tuned control parameter, voxel porosity, mesh porosity, component
 counts, pore percolation, triangle count, runtime, peak memory, and STL hash.
+Phase 2C also records the finest successful resolution as
+`reference_resolution_mm` and adds a `delta_vs_finest` block to each row.
 
 Metrics are classified as:
 

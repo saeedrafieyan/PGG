@@ -51,6 +51,7 @@ TRANSITIONS: dict[RunStatus, set[RunStatus]] = {
     RunStatus.FINAL_GENERATING: {
         RunStatus.VALIDATING,
         RunStatus.REPAIRING,
+        RunStatus.INFEASIBLE,
         RunStatus.FAILED,
         RunStatus.CANCELLED,
     },

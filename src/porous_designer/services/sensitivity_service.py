@@ -17,6 +17,7 @@ class SensitivityResult:
     output_dir: Path
     rows: list[dict[str, Any]]
     status: dict[str, str]
+    reference_resolution_mm: float | None = None
 
 
 def classify_metric(values: list[float], *, tolerance: float) -> str:
@@ -66,16 +67,54 @@ def run_resolution_sensitivity(
         }
         rows.append(row)
 
-    status = {
-        "control_parameter": classify_metric([float(r["control_parameter"]) for r in rows], tolerance=0.01),
-        "voxel_porosity": classify_metric([float(r["voxel_porosity"]) for r in rows], tolerance=0.01),
-        "mesh_porosity": classify_metric([float(r["mesh_porosity"]) for r in rows], tolerance=0.01),
-        "triangle_count": classify_metric([float(r["triangle_count"]) for r in rows], tolerance=100000),
+    finest = min(rows, key=lambda r: float(r["resolution_mm"])) if rows else None
+    if finest:
+        for row in rows:
+            row["delta_vs_finest"] = {
+                "control_parameter": float(row["control_parameter"]) - float(finest["control_parameter"]),
+                "voxel_porosity": float(row["voxel_porosity"]) - float(finest["voxel_porosity"]),
+                "mesh_porosity": float(row["mesh_porosity"]) - float(finest["mesh_porosity"]),
+                "triangle_count": int(row["triangle_count"]) - int(finest["triangle_count"]),
+            }
+
+    thresholds = {
+        "control_parameter": 0.01,
+        "voxel_porosity": 0.01,
+        "mesh_porosity": 0.01,
+        "triangle_count": 100000,
     }
-    payload = {"rows": rows, "status": status}
+    status = {
+        "control_parameter": classify_metric(
+            [float(r["control_parameter"]) for r in rows],
+            tolerance=thresholds["control_parameter"],
+        ),
+        "voxel_porosity": classify_metric(
+            [float(r["voxel_porosity"]) for r in rows],
+            tolerance=thresholds["voxel_porosity"],
+        ),
+        "mesh_porosity": classify_metric(
+            [float(r["mesh_porosity"]) for r in rows],
+            tolerance=thresholds["mesh_porosity"],
+        ),
+        "triangle_count": classify_metric(
+            [float(r["triangle_count"]) for r in rows],
+            tolerance=thresholds["triangle_count"],
+        ),
+    }
+    payload = {
+        "rows": rows,
+        "status": status,
+        "classification_thresholds": thresholds,
+        "reference_resolution_mm": finest["resolution_mm"] if finest else None,
+    }
     (output_dir / "sensitivity.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     with open(output_dir / "sensitivity.csv", "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()) if rows else ["resolution_mm"])
         writer.writeheader()
         writer.writerows(rows)
-    return SensitivityResult(output_dir=output_dir, rows=rows, status=status)
+    return SensitivityResult(
+        output_dir=output_dir,
+        rows=rows,
+        status=status,
+        reference_resolution_mm=finest["resolution_mm"] if finest else None,
+    )

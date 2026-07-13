@@ -68,6 +68,37 @@ def test_diamond_and_primitive_box_generation():
         assert result.triangle_count > 0
 
 
+def test_tpms_families_multiple_porosity_levels():
+    for family in (StructureFamily.GYROID, StructureFamily.DIAMOND, StructureFamily.PRIMITIVE):
+        for target in (0.35, 0.60, 0.80):
+            spec = _spec(
+                family,
+                DomainSpec(shape=DomainShape.BOX, dimensions_mm=[3, 3, 3]),
+                unit=1.5,
+                target=target,
+                tol=0.25,
+            )
+            result = generate_porous_stl(spec, profile=GenerationProfile.FINAL)
+            assert result.stl_path and result.stl_path.exists()
+            assert result.tuning is not None
+            assert result.tuning.monotonic
+            assert result.triangle_count > 0
+
+
+def test_unreachable_tpms_porosity_reports_failure():
+    spec = _spec(
+        StructureFamily.GYROID,
+        DomainSpec(shape=DomainShape.BOX, dimensions_mm=[3, 3, 3]),
+        unit=1.5,
+        target=0.99,
+        tol=0.0001,
+    )
+    result = generate_porous_stl(spec, profile=GenerationProfile.FINAL)
+    assert not result.success
+    assert result.tuning is not None
+    assert not result.tuning.reachable
+
+
 def test_hcp_cylinder_case_reports_metrics():
     spec = _spec(
         StructureFamily.HCP_SPHERICAL_PORES,
