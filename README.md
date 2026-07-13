@@ -1,68 +1,82 @@
-# PGG — Porous Geometry Generation
+# PGG - Porous Geometry Generation
 
-**Porous Structure Designer** — generate 3D porous structures (STL + STEP) from a plain-text specification or structured GUI fields.
-Built for lab samples / scaffolds: give it a bounding box, a lattice type, a pore size and a target porosity, and it produces printable/CAD-ready files.
+**PGG, Porous Geometry Generation** generates deterministic porous-geometry STL
+artifacts from structured specifications. The Phase 3A desktop GUI is a local
+PySide6 application for internal research workflows; the command-line backend
+remains the authoritative generation and validation engine.
 
 Repository: [github.com/saeedrafieyan/PGG](https://github.com/saeedrafieyan/PGG)
 
 ## Requirements
-- Python 3 with `numpy`, `scikit-image`, `trimesh` (for STL) and `gmsh` (for STEP).
-  All are already installed in this environment.
+
+- Python 3.12
+- Core backend: `numpy`, `scipy`, `scikit-image`, `trimesh`, `gmsh`,
+  `pydantic`, `PyYAML`, `structlog`
+- GUI extra: `PySide6`, `pyvista`, `pyvistaqt`, `psutil`
+
+Install editable development dependencies:
+
+```powershell
+pip install -e ".[gui,dev]"
+```
 
 ## Usage
 
-From a spec file:
-```
-python porousgen.py sample_spec.txt
+Structured CLI:
+
+```powershell
+porous-designer generate tests\fixtures\federica_regression.yaml --yaml --profile preview
+porous-designer estimate tests\fixtures\federica_regression.yaml --yaml --profile final
 ```
 
-Or purely from the command line (flags override spec values):
-```
-python porousgen.py --box 8x14x8 --lattice hcp --pore 1 --porosity 75-80% --formats stl,step --out sample
+GUI:
+
+```powershell
+porous-designer-gui
+python -m porous_designer.gui.app
+launch_pgg_gui.bat
 ```
 
-## Spec file format
-Human-readable `key: value` lines; `#` starts a comment.
-```
-bounding_box: 8 x 14 x 8      # mm (X Y Z)
-lattice:      hcp             # sc | bcc | fcc | hcp | gyroid
-pore_size:    1.0             # mm  (sphere diameter; for gyroid = unit-cell size)
-porosity:     75-80%          # target void fraction (single value OR a range -> midpoint)
-formats:      stl, step       # stl and/or step
-resolution:   0.04            # voxel size for meshing / porosity (mm)
-output:       sample          # output filename prefix
+Legacy scripts are preserved for comparison, but new development should use the
+`porous_designer` package.
+
+## Spec File Format
+
+The modern backend uses structured YAML matching `DesignSpecification`.
+Legacy `key: value` files are still loadable through the CLI adapter.
+
+Legacy example:
+
+```text
+bounding_box: 8 x 14 x 8
+lattice:      hcp
+pore_size:    1.0
+porosity:     75-80%
+formats:      stl
+resolution:   0.04
+output:       sample
 ```
 
-## How it works
-1. **Pore lattice** — pore centers are placed on the chosen lattice
-   (`sc`, `bcc`, `fcc`, `hcp`), parameterized by nearest-neighbour spacing.
-2. **Porosity tuning** — the pore diameter is fixed by `pore_size`; the tool
-   bisects the lattice spacing until the measured void fraction (from a voxel
-   sampling of the block) matches the target porosity. For `gyroid` it instead
-   tunes the level-set constant of the implicit TPMS surface.
-3. **STL** — the solid voxel field is triangulated with marching cubes
-   (watertight, exported as compact binary).
-4. **STEP** — the block and pore spheres are rebuilt in OpenCASCADE (via gmsh)
-   and boolean-cut into an exact B-rep solid.
+## How It Works
 
-## Notes & limits
-- **Interconnection:** when the tuned spacing is smaller than the pore diameter,
-  pores overlap → open, interconnected porosity (what you usually want for a
-  scaffold). If porosity is low enough that spacing exceeds the pore diameter,
-  pores are isolated (closed) — the tool prints a warning. Denser lattices
-  (`fcc`, `hcp`) interconnect at lower porosity than `sc`/`bcc`.
-- **Max porosity before overlap:** sc ≈48%, bcc ≈32%, fcc/hcp ≈26% *solid*
-  fraction at the touching point (i.e. porosity ≈52/68/74% respectively);
-  above that the pores must overlap.
-- **STEP is for sphere lattices only.** Gyroid is an implicit surface, so it is
-  exported as STL only.
-- **STEP performance:** the boolean scales with pore count. Small pores in a
-  large box → thousands of spheres → the cut can take minutes. gmsh may print
-  `BOPAlgo_Alert...` warnings during the cut; these are non-fatal.
-- STL is voxel-tessellated at `resolution`; smaller values = smoother surface +
-  larger files. When both formats are requested, the STL is derived from the
-  exact STEP B-rep instead.
+1. Pore centers or implicit TPMS fields are generated inside a box or cylinder.
+2. Porosity tuning bisects the generator control parameter.
+3. The solid voxel field is triangulated with marching cubes.
+4. Validation records topology, porosity, connectivity, cleanup, resources, and
+   provenance.
+5. STL artifacts and reports are written under `runs/<run_id>/`.
+
+## Notes And Limits
+
+- Preview meshes are not final validation artifacts.
+- STEP is disabled in the package pipeline until the Phase 0 negative-volume
+  failure is resolved.
+- Wall thickness and throat size are shown as unsupported in the Phase 3A GUI.
+- Large final STLs are not loaded automatically by the GUI.
+- LLM assistance, FEA, inverse design, cloud deployment, authentication, and
+  arbitrary CAD code generation are not part of Phase 3A.
 
 ## Example
-`sample_spec.txt` reproduces the original 8×14×8 mm HCP sample with 1 mm pores at
-75–80% porosity → `federica_scaffold.stl` + `federica_scaffold.step`.
+
+`tests/fixtures/federica_regression.yaml` reproduces the compact Federica HCP
+regression fixture and writes run artifacts under `runs/<run_id>/`.
