@@ -267,6 +267,17 @@ class GeminiProvider(StructuredProviderBase):
             },
             default=str,
         )
+        if hasattr(self.client, "interactions"):
+            response = self.client.interactions.create(
+                model=self.model,
+                input=prompt,
+                response_format={
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": schema,
+                },
+            )
+            return getattr(response, "output_text", response)
         if hasattr(self.client, "models"):
             response = self.client.models.generate_content(
                 model=self.model,

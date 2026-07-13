@@ -276,6 +276,8 @@ class ProviderSettingsDialog(QDialog):
         if entered_key and settings.provider_mode != ProviderMode.DETERMINISTIC_ONLY:
             store_session_key(settings.provider_mode.value, entered_key)
             settings.credential_mode = CredentialMode.SESSION
+        if settings.provider_mode != ProviderMode.DETERMINISTIC_ONLY:
+            settings.external_access_enabled = True
         provider = None
         if settings.provider_mode == ProviderMode.OPENAI:
             provider = OpenAIProvider(settings)

@@ -57,6 +57,25 @@ class FakeGeminiClient:
         self.models = FakeGeminiModels(payload)
 
 
+class FakeGeminiInteractions:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+
+        class Response:
+            output_text = self.payload
+
+        return Response()
+
+
+class FakeGeminiInteractionsClient:
+    def __init__(self, payload):
+        self.interactions = FakeGeminiInteractions(payload)
+
+
 def minimal_result(provider_mode="openai"):
     return {
         "schema_version": "1.0",
@@ -97,6 +116,17 @@ def test_gemini_defaults_and_request_construction():
     call = provider.client.models.calls[0]
     assert call["model"] == GEMINI_LOW_COST_MODEL
     assert call["config"]["response_mime_type"] == "application/json"
+    assert result["provider_metadata"]["provider"] == "gemini"
+
+
+def test_gemini_prefers_current_interactions_api():
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.GEMINI)
+    provider = GeminiProvider(settings, client=FakeGeminiInteractionsClient(__import__("json").dumps(minimal_result("gemini"))))
+    result = provider.parse_request("test", minimal_result(), {})
+    call = provider.client.interactions.calls[0]
+    assert call["model"] == GEMINI_LOW_COST_MODEL
+    assert call["response_format"]["mime_type"] == "application/json"
+    assert call["response_format"]["schema"] == {}
     assert result["provider_metadata"]["provider"] == "gemini"
 
 

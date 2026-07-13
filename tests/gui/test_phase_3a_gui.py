@@ -571,6 +571,30 @@ def test_provider_connection_failure_display(qtbot):
     assert "ok" in dialog.payload_preview.toPlainText()
 
 
+def test_provider_test_connection_enables_temporary_session_key(qtbot, monkeypatch):
+    seen = {}
+
+    class FakeOpenAIProvider:
+        def __init__(self, settings):
+            seen["external_access_enabled"] = settings.external_access_enabled
+            seen["credential_mode"] = settings.credential_mode
+            seen["model"] = settings.selected_model()
+
+        def test_connection(self):
+            return {"ok": True, "provider": "openai", "model": seen["model"], "latency_s": 0.01}
+
+    monkeypatch.setattr("porous_designer.gui.dialogs.provider_settings_dialog.OpenAIProvider", FakeOpenAIProvider)
+    dialog = ProviderSettingsDialog(ProviderSettings(provider_mode=ProviderMode.OPENAI, external_access_enabled=False))
+    qtbot.addWidget(dialog)
+    dialog.provider.setCurrentText("OpenAI")
+    dialog.api_key.setText("sk-unsaved-session-secret")
+    dialog._test_connection()
+    assert seen["external_access_enabled"] is True
+    assert seen["credential_mode"] == CredentialMode.SESSION
+    assert "Connection result: successful" in dialog.payload_preview.toPlainText()
+    assert "sk-unsaved-session-secret" not in dialog.payload_preview.toPlainText()
+
+
 def test_agentic_call_decision_display_and_no_external_call(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
