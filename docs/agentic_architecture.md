@@ -32,7 +32,7 @@ The agentic layer never starts preview or final generation.
 - `agentic.deterministic_parser`: regex, units, terminology, confidence, and
   ambiguity rules.
 - `agentic.provider`: provider-neutral interface, deterministic provider,
-  mock provider, and disabled external adapter.
+  mock provider, optional OpenAI/Gemini adapters, and disabled external adapter.
 - `agentic.orchestrator`: parse/propose/approve lifecycle and audit writing.
 - `agentic.review`: proposal construction and approved-field application.
 - `agentic.audit`: reproducible agentic audit files.
@@ -43,3 +43,7 @@ The `Agentic Request` panel displays parsed fields and ambiguities. The
 `SpecificationReviewDialog` is the only GUI path that can approve parsed
 fields. Approved fields populate existing GUI widgets and then reuse existing
 `DesignSpecification` validation.
+
+Phase 3B.1.1 adds optional OpenAI and Gemini providers behind the same
+provider-neutral interface. The deterministic call policy decides whether an
+external call is needed before any provider request is made.

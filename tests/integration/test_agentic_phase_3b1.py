@@ -76,6 +76,9 @@ def test_infeasible_request_still_parses_for_later_deterministic_estimate(tmp_pa
 
 
 def test_external_provider_disabled_invalid_json_timeout_and_fallback():
+    from porous_designer.agentic.provider_config import ProviderSettings
+
     assert RequestParserAgent(ExternalAgentProviderAdapter(enabled=False)).parse("Generate a 4 x 4 x 4 mm gyroid.").provider_mode == "deterministic"
-    assert RequestParserAgent(MockAgentProvider(invalid_json=True)).parse("Generate a 4 x 4 x 4 mm gyroid.").provider_failed
-    assert RequestParserAgent(MockAgentProvider(timeout=True)).parse("Generate a 4 x 4 x 4 mm gyroid.").provider_failed
+    settings = ProviderSettings(external_access_enabled=True)
+    assert RequestParserAgent(MockAgentProvider(invalid_json=True), settings=settings).parse("Generate a 4 x 4 x 4 mm scaffold with hexagonal packing and pore size 1 mm.").provider_failed
+    assert RequestParserAgent(MockAgentProvider(timeout=True), settings=settings).parse("Generate a 4 x 4 x 4 mm scaffold with hexagonal packing and pore size 1 mm.").provider_failed

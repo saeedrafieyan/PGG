@@ -11,6 +11,7 @@ import trimesh
 
 from porous_designer import __version__
 from porous_designer.domain.specification import DesignSpecification, load_legacy_spec
+from porous_designer.agentic.evaluation import evaluate_deterministic
 from porous_designer.logging_config import configure_logging, get_logger
 from porous_designer.services.generation_service import GenerationProfile, generate_porous_stl
 from porous_designer.services.mesh_optimization import OptimizationProfile, optimize_and_validate_mesh
@@ -204,6 +205,15 @@ def cmd_inspect_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_evaluate_agent_provider(args: argparse.Namespace) -> int:
+    if args.provider != "deterministic":
+        print("Live provider evaluation is documented but not run by default. Use pytest -m live_provider with local credentials.", file=sys.stderr)
+        return 2
+    metrics = evaluate_deterministic(args.output)
+    print(json.dumps({k: v for k, v in metrics.items() if k != "rows"}, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="porous-designer",
@@ -286,6 +296,12 @@ def main(argv: list[str] | None = None) -> int:
     p_cyl.add_argument("--resolutions", default="0.20,0.10,0.05")
     p_cyl.add_argument("--output", default="runs/cylinder_accuracy")
     p_cyl.set_defaults(func=cmd_cylinder_accuracy)
+
+    p_eval = sub.add_parser("evaluate-agent-provider", help="Evaluate request parser/provider benchmark without generation")
+    p_eval.add_argument("--provider", choices=["deterministic", "openai", "gemini"], default="deterministic")
+    p_eval.add_argument("--model", default="")
+    p_eval.add_argument("--output", default="runs/agentic/provider_evaluation.json")
+    p_eval.set_defaults(func=cmd_evaluate_agent_provider)
 
     args = parser.parse_args(argv)
     configure_logging(level="DEBUG" if args.verbose else "INFO", json_output=args.json_log)

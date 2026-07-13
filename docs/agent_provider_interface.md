@@ -13,8 +13,9 @@ Providers:
 
 - `NoLLMProvider`: deterministic-only mode, always available, no network.
 - `MockAgentProvider`: deterministic test provider for automated tests.
-- `ExternalAgentProviderAdapter`: disabled by default; no credentials or
-  transport are required to launch the GUI.
+- `OpenAIProvider`: optional strict structured-output adapter.
+- `GeminiProvider`: optional strict structured-output adapter.
+- `ExternalAgentProviderAdapter`: disabled compatibility adapter.
 
 Provider responses must validate against `ParsedRequestResult` schema. Invalid
 responses retry once with schema-error feedback and then fall back to

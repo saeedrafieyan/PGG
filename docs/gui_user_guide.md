@@ -56,6 +56,13 @@ Parsing does not change the active specification. Approval requires the review
 dialog. After approval, the GUI runs deterministic validation and feasibility
 estimation, but it does not start preview or final generation.
 
+## Agent Provider Settings
+
+`Agent Provider Settings` controls optional external interpretation providers.
+The default is deterministic-only with external access disabled. OpenAI and
+Gemini providers are optional and require local credentials. API keys are stored
+only through environment variables or the operating-system credential manager.
+
 ## Rendering Presets
 
 The preview panel includes:

@@ -12,10 +12,13 @@ Agentic Porous-Material Design System
 - Phase 3A.1: Windows worker/runtime stability.
 - Phase 3A.2: scientific preview rendering quality.
 - Phase 3A.3: compact preview layout and Diagnostics separation.
+- Phase 3B.1: human-supervised natural-language requirement interpretation.
+- Phase 3B.1.1: secure optional low-cost OpenAI/Gemini provider integration
+  and deterministic/provider evaluation.
 
 ## Current
 
-- Phase 3B.1: human-supervised natural-language requirement interpretation.
+- Phase 3B.1.1 completion and review.
 
 Scope:
 

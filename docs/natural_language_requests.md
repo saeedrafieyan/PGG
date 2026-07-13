@@ -26,3 +26,7 @@ Examples are built into the GUI:
 
 The parser proposes fields with confidence and evidence. It does not directly
 modify the active specification.
+
+When external providers are enabled, deterministic parsing still runs first.
+The call policy avoids unnecessary external calls for complete, unambiguous
+requests.

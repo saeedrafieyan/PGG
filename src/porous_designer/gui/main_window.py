@@ -22,10 +22,13 @@ from PySide6.QtWidgets import (
 )
 
 from porous_designer.agentic.orchestrator import AgenticRequestOrchestrator
+from porous_designer.agentic.provider_config import ProviderSettings
+from porous_designer.agentic.provider_factory import provider_from_settings
 from porous_designer.gui.application_controller import ApplicationController
 from porous_designer.gui.dialogs.about_dialog import show_about
 from porous_designer.gui.dialogs.ambiguity_resolution_dialog import AmbiguityResolutionDialog
 from porous_designer.gui.dialogs.diagnostics_dialog import DiagnosticsDialog
+from porous_designer.gui.dialogs.provider_settings_dialog import ProviderSettingsDialog
 from porous_designer.gui.dialogs.run_details_dialog import RunDetailsDialog
 from porous_designer.gui.dialogs.specification_review_dialog import SpecificationReviewDialog
 from porous_designer.gui.diagnostics import gui_event, runtime_diagnostics
@@ -61,7 +64,8 @@ class MainWindow(QMainWindow):
         self.state = StateStore(self)
         self.history_store = RunHistoryStore(Path("runs") / "pgg_run_history.sqlite")
         self.controller = ApplicationController(self.state, self.history_store, self)
-        self.agentic = AgenticRequestOrchestrator(audit_root=Path("runs"))
+        self.provider_settings = ProviderSettings()
+        self.agentic = AgenticRequestOrchestrator(provider_from_settings(self.provider_settings), audit_root=Path("runs"), settings=self.provider_settings)
         self._applying_agentic_specification = False
         self._build_ui()
         self._connect()
@@ -73,6 +77,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
         toolbar.addAction("About", lambda: show_about(self))
         toolbar.addAction("Diagnostics", self._show_diagnostics)
+        toolbar.addAction("Agent Provider Settings", self._show_provider_settings)
         toolbar.addAction("Open Output Folder", self.controller.open_output_folder)
 
         self.request_panel = RequestPanel()
@@ -309,6 +314,17 @@ class MainWindow(QMainWindow):
         self._diagnostics_dialog.show()
         self._diagnostics_dialog.raise_()
         self._diagnostics_dialog.activateWindow()
+
+    def _show_provider_settings(self) -> None:
+        dialog = ProviderSettingsDialog(self.provider_settings, self)
+        dialog.settings_changed.connect(self._provider_settings_changed)
+        dialog.exec()
+
+    def _provider_settings_changed(self, settings: ProviderSettings) -> None:
+        self.provider_settings = settings
+        self.agentic.settings = settings
+        self.agentic.provider = provider_from_settings(settings)
+        self.agentic_request_panel.set_result(self.agentic.last_result, self.agentic.status.value, self.agentic.provider_status)
 
     def closeEvent(self, event) -> None:
         gui_event("main_window_close_requested")

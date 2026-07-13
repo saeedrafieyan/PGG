@@ -32,6 +32,37 @@ class AgenticWorkflowStatus(str, Enum):
     DETERMINISTIC_FALLBACK_ACTIVE = "Deterministic fallback active"
 
 
+class ProviderMode(str, Enum):
+    DETERMINISTIC_ONLY = "deterministic"
+    OPENAI = "openai"
+    GEMINI = "gemini"
+
+
+class ProviderErrorCategory(str, Enum):
+    PROVIDER_NOT_CONFIGURED = "PROVIDER_NOT_CONFIGURED"
+    PROVIDER_AUTHENTICATION_FAILED = "PROVIDER_AUTHENTICATION_FAILED"
+    PROVIDER_MODEL_UNAVAILABLE = "PROVIDER_MODEL_UNAVAILABLE"
+    PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+    PROVIDER_RATE_LIMITED = "PROVIDER_RATE_LIMITED"
+    PROVIDER_QUOTA_EXCEEDED = "PROVIDER_QUOTA_EXCEEDED"
+    PROVIDER_NETWORK_ERROR = "PROVIDER_NETWORK_ERROR"
+    PROVIDER_SCHEMA_INVALID = "PROVIDER_SCHEMA_INVALID"
+    PROVIDER_REFUSAL = "PROVIDER_REFUSAL"
+    PROVIDER_CONTENT_FILTERED = "PROVIDER_CONTENT_FILTERED"
+    PROVIDER_INTERNAL_ERROR = "PROVIDER_INTERNAL_ERROR"
+    PROVIDER_CANCELLED = "PROVIDER_CANCELLED"
+    PROVIDER_ESCALATION_DECLINED = "PROVIDER_ESCALATION_DECLINED"
+    PROVIDER_CACHE_INVALID = "PROVIDER_CACHE_INVALID"
+
+
+class ExternalCallDecisionCode(str, Enum):
+    NO_EXTERNAL_CALL_REQUIRED = "NO_EXTERNAL_CALL_REQUIRED"
+    EXTERNAL_CALL_RECOMMENDED = "EXTERNAL_CALL_RECOMMENDED"
+    EXTERNAL_CALL_REQUIRED_FOR_INTERPRETATION = "EXTERNAL_CALL_REQUIRED_FOR_INTERPRETATION"
+    EXTERNAL_ACCESS_DISABLED = "EXTERNAL_ACCESS_DISABLED"
+    DETERMINISTIC_FALLBACK = "DETERMINISTIC_FALLBACK"
+
+
 class ConfidenceCategory(str, Enum):
     HIGH = "high"
     MODERATE = "moderate"
@@ -152,6 +183,67 @@ class ParsedRequestResult(StrictModel):
     evidence: list[ParserEvidence] = Field(default_factory=list)
     provider_failed: bool = False
     provider_failure_reason: str = ""
+    provider_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExternalCallDecision(StrictModel):
+    decision_code: ExternalCallDecisionCode
+    explanation: str
+    unresolved_fields: list[str] = Field(default_factory=list)
+    unresolved_ambiguities: list[str] = Field(default_factory=list)
+    detected_conflicts: list[str] = Field(default_factory=list)
+    unsupported_requests: list[str] = Field(default_factory=list)
+    human_review_required: bool = True
+
+
+class ProviderDisagreement(StrictModel):
+    field_path: str
+    deterministic_value: Any
+    provider_value: Any
+    deterministic_evidence: str = ""
+    provider_evidence: str = ""
+    severity: Literal["info", "warning", "blocking"] = "warning"
+    required_review: bool = True
+    resolution: str | None = None
+    resolved_by: str | None = None
+    resolved_at: str | None = None
+
+
+class ProviderError(StrictModel):
+    provider: str
+    model: str
+    category: ProviderErrorCategory
+    safe_user_message: str
+    retryable: bool = False
+    technical_details: str = ""
+    redacted_raw_details: str = ""
+    fallback_status: str = "deterministic_fallback_available"
+
+
+class ProviderMetadata(StrictModel):
+    provider: str
+    model: str
+    model_category: str
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    request_id: str | None = None
+    latency_s: float | None = None
+    retries: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cached_tokens: int | None = None
+    schema_version: str = "1.0"
+    completion_status: str = "unknown"
+    escalation_status: str = "not_escalated"
+    cache_status: str = "miss"
+
+
+class FeasibilityExplanation(StrictModel):
+    deterministic_status: str
+    summary: str
+    reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    suggested_user_actions: list[str] = Field(default_factory=list)
 
 
 class FieldReviewDecision(StrictModel):

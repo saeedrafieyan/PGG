@@ -11,6 +11,7 @@ import pytest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
 from porous_designer.agentic.contracts import FieldReviewDecision
+from porous_designer.agentic.provider_config import ProviderSettings
 from porous_designer.domain.enums import DomainShape, StructureFamily
 from porous_designer.domain.specification import (
     ConstraintsSpec,
@@ -23,6 +24,7 @@ from porous_designer.domain.specification import (
     TargetsSpec,
 )
 from porous_designer.gui.dialogs.error_dialog import ErrorDialog
+from porous_designer.gui.dialogs.provider_settings_dialog import ProviderSettingsDialog
 from porous_designer.gui.dialogs.specification_review_dialog import SpecificationReviewDialog
 from porous_designer.gui.main_window import MainWindow
 from porous_designer.gui.models.run_history_model import RunHistoryStore
@@ -498,6 +500,66 @@ def test_agentic_approval_becomes_stale_after_manual_edit(qtbot, monkeypatch):
     window.agentic.last_approval = record
     window.domain_panel.box_x.setValue(5.0)
     assert window.agentic.status.value == "Approval stale"
+
+
+def test_provider_settings_default_deterministic_and_disabled(qtbot):
+    dialog = ProviderSettingsDialog(ProviderSettings())
+    qtbot.addWidget(dialog)
+    assert not dialog.external_access.isChecked()
+    assert dialog.provider.currentText() == "Deterministic only"
+    assert dialog.model_category.text() == "None"
+    assert "No external LLM is required" in dialog.privacy.text()
+
+
+def test_provider_selector_model_category_and_missing_key(qtbot, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    dialog = ProviderSettingsDialog(ProviderSettings())
+    qtbot.addWidget(dialog)
+    dialog.provider.setCurrentText("OpenAI")
+    assert dialog.model.currentText() == "gpt-5.6-luna"
+    assert dialog.model_category.text() == "Low cost"
+    assert "Key unavailable" in dialog.key_source.text()
+
+
+def test_provider_settings_secure_key_storage_and_delete(qtbot, monkeypatch):
+    stored = {}
+
+    def fake_store(provider, key):
+        stored[provider] = key
+
+    def fake_delete(provider):
+        stored.pop(provider, None)
+
+    monkeypatch.setattr("porous_designer.gui.dialogs.provider_settings_dialog.store_api_key", fake_store)
+    monkeypatch.setattr("porous_designer.gui.dialogs.provider_settings_dialog.delete_api_key", fake_delete)
+    dialog = ProviderSettingsDialog(ProviderSettings())
+    qtbot.addWidget(dialog)
+    dialog.provider.setCurrentText("OpenAI")
+    dialog.api_key.setText("sk-test-secret")
+    dialog._store_key()
+    assert stored["openai"] == "sk-test-secret"
+    assert dialog.api_key.text() == ""
+    dialog._delete_key()
+    assert "openai" not in stored
+
+
+def test_provider_connection_failure_display(qtbot):
+    dialog = ProviderSettingsDialog(ProviderSettings())
+    qtbot.addWidget(dialog)
+    dialog.provider.setCurrentText("OpenAI")
+    dialog.external_access.setChecked(True)
+    dialog._test_connection()
+    assert "ok" in dialog.payload_preview.toPlainText()
+
+
+def test_agentic_call_decision_display_and_no_external_call(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._parse_agentic_request("Create a 4 x 4 x 4 mm HCP scaffold with 70% porosity.")
+    result = window.agentic.last_result
+    assert result is not None
+    assert result.provider_metadata["external_call_decision"]["decision_code"] in {"EXTERNAL_ACCESS_DISABLED", "NO_EXTERNAL_CALL_REQUIRED"}
+    assert window.controller.worker is None
 
 
 @pytest.mark.slow

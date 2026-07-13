@@ -1,6 +1,7 @@
 # Agentic Privacy
 
-External agent access is disabled by default.
+External agent access is disabled by default. No external LLM is required to
+use PGG.
 
 Allowed external-provider payloads, if explicitly enabled in a later phase:
 
@@ -23,3 +24,7 @@ Not allowed:
 - API keys
 
 The GUI shows a privacy notice in the `Agentic Request` section.
+
+API keys are discovered from environment variables or OS credential storage.
+They are never stored in normal Qt settings, logs, audit files, or request
+payloads.

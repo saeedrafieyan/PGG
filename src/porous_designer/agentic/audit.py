@@ -24,6 +24,13 @@ def write_agentic_audit(
     parsed_json = parsed.model_dump(mode="json")
     (target / "deterministic_extraction.json").write_text(json.dumps(parsed_json, indent=2), encoding="utf-8")
     (target / "provider_response.json").write_text(json.dumps(parsed_json if not parsed.provider_failed else {"provider_failed": True, "reason": parsed.provider_failure_reason}, indent=2), encoding="utf-8")
+    metadata = parsed.provider_metadata or {}
+    (target / "external_call_decision.json").write_text(json.dumps(metadata.get("external_call_decision", {}), indent=2), encoding="utf-8")
+    (target / "provider_request_redacted.json").write_text(json.dumps(metadata.get("provider_request_redacted", {}), indent=2), encoding="utf-8")
+    (target / "provider_response_validated.json").write_text(json.dumps(parsed_json, indent=2), encoding="utf-8")
+    (target / "provider_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (target / "provider_disagreements.json").write_text(json.dumps(metadata.get("provider_disagreements", []), indent=2), encoding="utf-8")
+    (target / "cache_metadata.json").write_text(json.dumps({"cache_status": metadata.get("cache_status", "miss")}, indent=2), encoding="utf-8")
     (target / "ambiguities.json").write_text(json.dumps([a.model_dump(mode="json") for a in parsed.ambiguities], indent=2), encoding="utf-8")
     (target / "resolutions.json").write_text(json.dumps({a.identifier: a.resolved_choice for a in parsed.ambiguities if a.resolved_choice}, indent=2), encoding="utf-8")
     proposed_specification.save_yaml(target / "proposed_specification.yaml")

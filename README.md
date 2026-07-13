@@ -58,6 +58,10 @@ to the active specification.
 External agent access is disabled by default. Deterministic-only parsing works
 without network credentials.
 
+Phase 3B.1.1 adds optional OpenAI and Gemini provider adapters for structured
+request interpretation. No external LLM is required to use PGG, and external
+access must be explicitly enabled in the GUI provider settings.
+
 ## Spec File Format
 
 The modern backend uses structured YAML matching `DesignSpecification`.
