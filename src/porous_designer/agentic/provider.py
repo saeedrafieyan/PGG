@@ -20,6 +20,17 @@ from porous_designer.agentic.provider_config import (
 from porous_designer.agentic.provider_errors import classify_provider_exception
 
 
+CONNECTION_PROBE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "ok": {"type": "boolean"},
+        "provider": {"type": "string"},
+    },
+    "required": ["ok", "provider"],
+}
+
+
 class AgentProvider(Protocol):
     name: str
     enabled: bool
@@ -138,23 +149,24 @@ class StructuredProviderBase:
         }
 
     def test_connection(self) -> dict:
-        synthetic = {
-            "schema_version": "1.0",
-            "provider_mode": self.name,
-            "parser_version": "3B.1",
-            "extracted_fields": [],
-            "ambiguities": [],
-            "missing_requirements": [],
-            "unsupported_requests": [],
-            "assumptions": [],
-            "evidence": [],
-        }
         t0 = time.perf_counter()
         try:
             self._ensure_configured()
-            result = self.parse_request("Synthetic 1 x 1 x 1 mm SC parser connection test.", synthetic, ParsedRequestResult.model_json_schema())
-            metadata = self.last_metadata or self._metadata(time.perf_counter() - t0, result, completion_status="success")
-            return {"ok": True, "provider": self.name, "model": self.model, "latency_s": metadata.latency_s, "metadata": metadata.model_dump(mode="json")}
+            raw = self._call_connection_probe()
+            data = self._coerce_json(raw)
+            if data.get("ok") is not True:
+                raise ValueError(f"Provider probe returned unexpected payload: {data}")
+            latency_s = time.perf_counter() - t0
+            metadata = self._metadata(latency_s, data, completion_status="connection_probe_success")
+            self.last_metadata = metadata
+            return {
+                "ok": True,
+                "provider": self.name,
+                "model": self.model,
+                "structured_output": True,
+                "latency_s": latency_s,
+                "metadata": metadata.model_dump(mode="json"),
+            }
         except Exception as exc:
             error = classify_provider_exception(self.name, self.model, exc)
             return {"ok": False, "provider": self.name, "model": self.model, "error": error.model_dump(mode="json")}
@@ -176,6 +188,9 @@ class StructuredProviderBase:
         raise NotImplementedError(f"{self.name} SDK is optional and no client was supplied.")
 
     def _call_client(self, request: str, deterministic_evidence: dict, schema: dict) -> Any:
+        raise NotImplementedError
+
+    def _call_connection_probe(self) -> Any:
         raise NotImplementedError
 
     def _coerce_json(self, raw: Any) -> dict:
@@ -234,6 +249,31 @@ class OpenAIProvider(StructuredProviderBase):
             return getattr(response, "output_text", response)
         return self.client.create(model=self.model, messages=payload, response_format={"type": "json_schema", "json_schema": {"name": "ParsedRequestResult", "schema": schema, "strict": True}})
 
+    def _call_connection_probe(self) -> Any:
+        if self.client is None:
+            self.client = self._create_client()
+        prompt = "Return JSON with ok=true and provider='openai'."
+        if hasattr(self.client, "responses"):
+            response = self.client.responses.create(
+                model=self.model,
+                input=[
+                    {"role": "system", "content": "Return only JSON matching the supplied schema."},
+                    {"role": "user", "content": prompt},
+                ],
+                text={"format": {"type": "json_schema", "name": "ConnectionProbe", "schema": CONNECTION_PROBE_SCHEMA, "strict": True}},
+                max_output_tokens=80,
+                timeout=self.timeout_s,
+            )
+            return getattr(response, "output_text", response)
+        return self.client.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "Return only JSON matching the supplied schema."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_schema", "json_schema": {"name": "ConnectionProbe", "schema": CONNECTION_PROBE_SCHEMA, "strict": True}},
+        )
+
     def _create_client(self) -> Any:
         credential = lookup_api_key(self.env_provider_name, self.settings.credential_mode)
         if not credential.available or not credential.key:
@@ -286,6 +326,30 @@ class GeminiProvider(StructuredProviderBase):
             )
             return getattr(response, "text", response)
         return self.client.generate_content(model=self.model, contents=prompt, generation_config={"response_mime_type": "application/json", "response_schema": schema})
+
+    def _call_connection_probe(self) -> Any:
+        if self.client is None:
+            self.client = self._create_client()
+        prompt = "Return JSON with ok=true and provider='gemini'."
+        if hasattr(self.client, "interactions"):
+            response = self.client.interactions.create(
+                model=self.model,
+                input=prompt,
+                response_format={
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": CONNECTION_PROBE_SCHEMA,
+                },
+            )
+            return getattr(response, "output_text", response)
+        if hasattr(self.client, "models"):
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config={"response_mime_type": "application/json", "response_schema": CONNECTION_PROBE_SCHEMA, "max_output_tokens": 80},
+            )
+            return getattr(response, "text", response)
+        return self.client.generate_content(model=self.model, contents=prompt, generation_config={"response_mime_type": "application/json", "response_schema": CONNECTION_PROBE_SCHEMA})
 
     def _create_client(self) -> Any:
         credential = lookup_api_key(self.env_provider_name, self.settings.credential_mode)

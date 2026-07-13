@@ -27,7 +27,9 @@ def classify_provider_exception(provider: str, model: str, exc: Exception) -> Pr
     lowered = raw.lower()
     category = ProviderErrorCategory.PROVIDER_INTERNAL_ERROR
     retryable = False
-    if isinstance(exc, TimeoutError) or "timeout" in lowered:
+    if "sdk is not installed" in lowered or "could not be loaded" in lowered:
+        category = ProviderErrorCategory.PROVIDER_NOT_CONFIGURED
+    elif isinstance(exc, TimeoutError) or "timeout" in lowered:
         category = ProviderErrorCategory.PROVIDER_TIMEOUT
         retryable = True
     elif "auth" in lowered or "api key" in lowered or "unauthorized" in lowered:

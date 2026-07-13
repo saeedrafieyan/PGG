@@ -151,8 +151,9 @@ def test_provider_disabled_and_call_decisions():
 
 def test_connection_success_and_failure():
     settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI)
-    ok = OpenAIProvider(settings, client=FakeOpenAIClient(__import__("json").dumps(minimal_result("openai")))).test_connection()
+    ok = OpenAIProvider(settings, client=FakeOpenAIClient(__import__("json").dumps({"ok": True, "provider": "openai"}))).test_connection()
     assert ok["ok"] is True
+    assert ok["structured_output"] is True
     fail = OpenAIProvider(settings, client=FakeOpenAIClient("{bad json")).test_connection()
     assert fail["ok"] is False
 
@@ -162,6 +163,7 @@ def test_timeout_rate_limit_quota_model_error_classification():
     assert classify_provider_exception("openai", "m", RuntimeError("rate limit")).category.value == "PROVIDER_RATE_LIMITED"
     assert classify_provider_exception("openai", "m", RuntimeError("quota exhausted")).category.value == "PROVIDER_QUOTA_EXCEEDED"
     assert classify_provider_exception("openai", "m", RuntimeError("model unavailable")).category.value == "PROVIDER_MODEL_UNAVAILABLE"
+    assert classify_provider_exception("openai", "m", RuntimeError("OpenAI SDK is not installed or could not be loaded.")).category.value == "PROVIDER_NOT_CONFIGURED"
 
 
 def test_malformed_json_schema_mismatch_retry_and_fallback():
