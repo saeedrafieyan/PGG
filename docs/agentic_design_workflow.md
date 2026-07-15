@@ -29,3 +29,17 @@ Preview and final generation require:
 - explicit user click
 
 Approval does not automatically start preview or final generation.
+## Phase 3B.2 Plan Review
+
+After the user approves an agentic specification, Agentic Design shows an
+Agentic Plan section. The user can generate a strategy plan, review deterministic
+steps, validation gates, unsupported requirements, risks, and checkpoints, then
+approve or reject the plan.
+
+Approved plans do not run anything automatically. Estimate, Preview, Final, and
+report export remain deterministic user-triggered actions. Preview and Final are
+disabled until the current approved specification revision has an approved
+strategy plan.
+
+If the approved specification changes, the plan becomes stale and must be
+regenerated or reapproved for the new revision.

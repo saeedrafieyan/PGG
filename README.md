@@ -73,6 +73,12 @@ Phase 3B.1.3 separates workflow authority: manual fields are hidden while
 Agentic Design is active, approved agentic specifications are shown read-only,
 and stale agentic approvals block preview/final generation.
 
+Phase 3B.2 adds a bounded Engineering Strategy Agent. After a human-approved
+agentic specification, the GUI can generate a reviewable strategy plan with
+deterministic tools, validation gates, unsupported-request notes, risks, and
+user checkpoints. Agentic Preview and Final require an approved non-stale plan,
+but every execution step still requires an explicit user click.
+
 ## Spec File Format
 
 The modern backend uses structured YAML matching `DesignSpecification`.
@@ -110,9 +116,9 @@ output:       sample
   geometry or validation metrics.
 - Renderer and OpenGL details are available from the GUI `Diagnostics` action;
   the normal preview panel shows only a compact preview/final status row.
-- FEA, inverse design, cloud deployment, authentication, autonomous generation,
-  strategy-agent planning, bounded repair, and arbitrary CAD code generation are
-  not part of Phase 3B.1.3.
+- FEA, inverse design, cloud deployment, autonomous generation, bounded repair,
+  STEP generation, and arbitrary CAD code generation are not part of Phase
+  3B.2.
 
 ## Example
 

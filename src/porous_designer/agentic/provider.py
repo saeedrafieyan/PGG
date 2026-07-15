@@ -64,11 +64,12 @@ class MockAgentProvider:
     name = "MockAgentProvider"
     enabled = True
 
-    def __init__(self, response: dict | None = None, *, invalid_json: bool = False, timeout: bool = False, metadata: dict | None = None) -> None:
+    def __init__(self, response: dict | None = None, *, invalid_json: bool = False, timeout: bool = False, metadata: dict | None = None, strategy_response: dict | None = None) -> None:
         self.response = response
         self.invalid_json = invalid_json
         self.timeout = timeout
         self.metadata = metadata or {}
+        self.strategy_response = strategy_response or {}
 
     def parse_request(self, request: str, deterministic_evidence: dict, schema: dict) -> dict:
         if self.timeout:
@@ -85,6 +86,11 @@ class MockAgentProvider:
 
     def explain_feasibility(self, deterministic_result: dict, approved_specification: dict) -> dict:
         return {"summary": "Mock explanation follows deterministic status.", "status": deterministic_result.get("status")}
+
+    def explain_strategy_plan(self, approved_specification: dict, deterministic_plan: dict) -> dict:
+        if self.timeout:
+            raise TimeoutError("Mock provider timed out.")
+        return self.strategy_response
 
 
 class ExternalAgentProviderAdapter:

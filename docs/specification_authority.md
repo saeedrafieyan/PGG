@@ -33,3 +33,13 @@ review is approved.
 Run metadata records the active mode, origin, revision, approval status,
 provider/model, external-call mode, stale-approval status, and the user action
 that authorized generation.
+## Plan Authority
+
+Strategy plans are bound to the exact approved `specification_id` and
+`specification_revision`. They are advisory until the local user approves them.
+
+A plan cannot modify the approved specification. Provider wording cannot change
+deterministic feasibility, remove validation gates, add tools, or turn
+unsupported requirements into supported measurements. If a new specification
+revision is approved, the old plan is marked stale and no longer authorizes
+Agentic Preview or Final.

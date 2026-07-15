@@ -53,3 +53,17 @@ generation authorization checks before Estimate, Preview, or Final actions.
 Phase 3B.1.1 adds optional OpenAI and Gemini providers behind the same
 provider-neutral interface. The deterministic call policy decides whether an
 external call is needed before any provider request is made.
+## Phase 3B.2 Strategy Planning
+
+The architecture now includes a bounded strategy-planning layer after
+specification approval. `porous_designer.agentic.strategy` creates strict
+`StrategyPlan` objects from approved `DesignSpecification` revisions.
+
+The deterministic planner is authoritative. Optional provider wording can only
+add concise explanation or caution text and is rejected if it proposes
+forbidden tools such as STEP generation, FEA, autonomous repair, inverse design,
+material optimization, arbitrary code, or unrestricted tool use.
+
+Plan approval is separate from specification approval. Agentic Preview and Final
+require both an approved non-stale specification and an approved non-stale
+strategy plan. Manual Design mode does not use this gate.

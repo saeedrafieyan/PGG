@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
     QDockWidget,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -33,6 +34,18 @@ from porous_designer.agentic.orchestrator import AgenticRequestOrchestrator
 from porous_designer.agentic.provider_config import ExternalCallMode, ProviderSettings, load_provider_settings, save_provider_settings
 from porous_designer.agentic.provider_errors import redact_secrets
 from porous_designer.agentic.provider_factory import provider_from_settings
+from porous_designer.agentic.strategy import (
+    PlanApprovalRecord,
+    PlanObservation,
+    StrategyPlan,
+    apply_provider_strategy_wording,
+    approve_strategy_plan,
+    deterministic_strategy_plan,
+    mark_plan_stale,
+    observation_for_estimate,
+    observation_for_run,
+    write_strategy_audit,
+)
 from porous_designer.gui.application_controller import ApplicationController
 from porous_designer.gui.dialogs.about_dialog import show_about
 from porous_designer.gui.dialogs.ambiguity_resolution_dialog import AmbiguityResolutionDialog
@@ -52,6 +65,7 @@ from porous_designer.gui.panels.preview_panel import PreviewPanel
 from porous_designer.gui.panels.request_panel import RequestPanel
 from porous_designer.gui.panels.run_history_panel import RunHistoryPanel
 from porous_designer.gui.panels.structure_panel import StructurePanel
+from porous_designer.gui.panels.strategy_plan_panel import StrategyPlanPanel
 from porous_designer.gui.panels.targets_panel import TargetsPanel
 from porous_designer.gui.panels.validation_panel import ValidationPanel
 from porous_designer.gui.state_store import StateStore
@@ -92,6 +106,9 @@ class MainWindow(QMainWindow):
         self.manual_revision = new_manual_revision(self.manual_draft_specification)
         self.agentic_revision: SpecificationRevision | None = None
         self.agentic_execution_authorized = False
+        self.strategy_plan: StrategyPlan | None = None
+        self.strategy_plan_approval: PlanApprovalRecord | None = None
+        self.strategy_plan_observations: list[PlanObservation] = []
         self._last_provider_test = "Not tested"
         self._last_provider_decision = "none"
         self._last_provider_execution = "none"
@@ -164,6 +181,8 @@ class MainWindow(QMainWindow):
         summary_layout = QVBoxLayout(self.agentic_summary_box)
         summary_layout.addWidget(self.agentic_summary)
         summary_layout.addLayout(summary_buttons)
+        self.strategy_plan_panel = StrategyPlanPanel()
+        self.strategy_plan_box = group("Agentic Plan", self.strategy_plan_panel)
         self.generation_group = group("Generation", self.generation_panel)
         self.manual_groups = [
             self.request_group,
@@ -180,6 +199,7 @@ class MainWindow(QMainWindow):
             self.targets_group,
             self.manufacturing_group,
             self.agentic_summary_box,
+            self.strategy_plan_box,
             self.generation_group,
         ):
             left_layout.addWidget(box)
@@ -244,6 +264,11 @@ class MainWindow(QMainWindow):
         self.agentic_request_panel.configure_provider_requested.connect(self._show_provider_settings)
         self.agentic_request_panel.test_provider_requested.connect(self._test_active_provider)
         self.agentic_request_panel.deterministic_only_requested.connect(self._use_deterministic_only)
+        self.strategy_plan_panel.generate_requested.connect(self._generate_strategy_plan)
+        self.strategy_plan_panel.regenerate_requested.connect(self._generate_strategy_plan)
+        self.strategy_plan_panel.approve_requested.connect(self._approve_strategy_plan)
+        self.strategy_plan_panel.reject_requested.connect(self._reject_strategy_plan)
+        self.strategy_plan_panel.export_requested.connect(self._export_strategy_plan_json)
         self.request_panel.load_requested.connect(lambda: self.controller.load_specification(self))
         self.request_panel.save_requested.connect(lambda: self.controller.save_specification(self))
         self.request_panel.report_requested.connect(lambda: self.controller.export_report(self))
@@ -289,6 +314,7 @@ class MainWindow(QMainWindow):
             group_box.setVisible(manual)
         self.agentic_group.setVisible(not manual)
         self.agentic_summary_box.setVisible(not manual)
+        self.strategy_plan_box.setVisible((not manual) and self.agentic_approved_specification is not None)
         self.switch_to_agentic_button.setVisible(manual)
         self.generation_panel.set_inputs_enabled(manual)
         self.mode_banner.setText(
@@ -298,6 +324,7 @@ class MainWindow(QMainWindow):
         self.agentic_mode_hint.setVisible(not manual)
         self._persist_application_mode()
         self._refresh_agentic_summary()
+        self._refresh_strategy_plan_panel()
         self._refresh_generation_authorization()
         gui_event("application_mode_changed", mode=mode.value)
 
@@ -350,6 +377,9 @@ class MainWindow(QMainWindow):
         self.agentic_approved_specification = None
         self.agentic_revision = None
         self.agentic_execution_authorized = False
+        self.strategy_plan = None
+        self.strategy_plan_approval = None
+        self.strategy_plan_observations = []
         self.agentic_state = AgenticWorkflowState.AGENTIC_REQUEST_EMPTY
         self._apply_application_mode(ApplicationMode.AGENTIC_DESIGN)
 
@@ -360,6 +390,18 @@ class MainWindow(QMainWindow):
             and self.agentic_revision is not None
             and self.agentic_revision.approval_status == "approved"
             and self.agentic_execution_authorized
+            and self.strategy_plan is not None
+            and self.strategy_plan.status == "approved"
+            and self.strategy_plan.specification_revision == self.agentic_revision.revision
+            and self.strategy_plan.specification_id == self.agentic_revision.specification_id
+        )
+
+    def _agentic_estimate_authorized(self) -> bool:
+        return (
+            self.application_mode == ApplicationMode.AGENTIC_DESIGN
+            and self.agentic_approved_specification is not None
+            and self.agentic_revision is not None
+            and self.agentic_revision.approval_status == "approved"
         )
 
     def _refresh_generation_authorization(self) -> None:
@@ -367,11 +409,13 @@ class MainWindow(QMainWindow):
             self.generation_panel.estimate_button.setEnabled(True)
             return
         authorized = self._agentic_generation_authorized()
-        self.generation_panel.estimate_button.setEnabled(authorized)
+        self.generation_panel.estimate_button.setEnabled(self._agentic_estimate_authorized())
         self.generation_panel.preview_button.setEnabled(authorized)
         self.generation_panel.final_button.setEnabled(authorized)
         if not authorized and self.agentic_revision and self.agentic_revision.approval_status == "stale":
             self.progress_label.setText("Approval stale. Review and approve the updated specification.")
+        elif self._agentic_estimate_authorized() and not authorized:
+            self.progress_label.setText("Approve a non-stale strategy plan before Agentic Preview or Final.")
 
     def _run_metadata(self, *, user_action: str) -> dict:
         revision = self.manual_revision if self.application_mode == ApplicationMode.MANUAL_DESIGN else self.agentic_revision
@@ -385,12 +429,14 @@ class MainWindow(QMainWindow):
                 "model": self.provider_settings.selected_model(),
                 "external_call_mode": self.provider_settings.external_call_mode.value,
                 "stale_approval": bool(self.agentic_revision and self.agentic_revision.approval_status == "stale"),
+                "strategy_plan_id": self.strategy_plan.plan_id if self.strategy_plan else "",
+                "strategy_plan_status": self.strategy_plan.status if self.strategy_plan else "not_generated",
             }
         )
         return metadata
 
     def _estimate_requested(self) -> None:
-        if self.application_mode == ApplicationMode.AGENTIC_DESIGN and not self._agentic_generation_authorized():
+        if self.application_mode == ApplicationMode.AGENTIC_DESIGN and not self._agentic_estimate_authorized():
             self.progress_label.setText("Approval stale. Review and approve the updated specification.")
             return
         estimate = self.controller.estimate()
@@ -399,6 +445,7 @@ class MainWindow(QMainWindow):
                 self.manual_state = ManualWorkflowState.MANUAL_ESTIMATED
             else:
                 self.agentic_state = AgenticWorkflowState.AGENTIC_ESTIMATED
+                self._record_plan_observation(observation_for_estimate(self.strategy_plan, estimate) if self.strategy_plan else None)
 
     def _preview_requested(self) -> None:
         if self.application_mode == ApplicationMode.AGENTIC_DESIGN and not self._agentic_generation_authorized():
@@ -411,6 +458,78 @@ class MainWindow(QMainWindow):
             self.progress_label.setText("Approval stale. Review and approve the updated specification.")
             return
         self.controller.start_final(self, run_metadata=self._run_metadata(user_action="generate_final"))
+
+    def _generate_strategy_plan(self) -> None:
+        if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
+            self.progress_label.setText("Switch to Agentic Design before planning.")
+            return
+        if self.agentic_approved_specification is None or self.agentic_revision is None or self.agentic_revision.approval_status != "approved":
+            self.progress_label.setText("Approve an agentic specification before generating a strategy plan.")
+            return
+        plan = deterministic_strategy_plan(
+            self.agentic_approved_specification,
+            specification_revision=self.agentic_revision.revision,
+            parsed_request=self.agentic.last_result,
+        )
+        provider_metadata = {"provider": "deterministic", "model": "none", "enhancement": "not_requested"}
+        if hasattr(self.agentic.provider, "explain_strategy_plan") and self.provider_settings.external_access_enabled:
+            try:
+                payload = self.agentic.provider.explain_strategy_plan(
+                    self.agentic_approved_specification.model_dump(mode="json"),
+                    plan.model_dump(mode="json"),
+                )
+                provider_name = getattr(self.agentic.provider, "name", self.provider_settings.provider_mode.value)
+                model = getattr(self.agentic.provider, "model", self.provider_settings.selected_model())
+                enhanced = apply_provider_strategy_wording(plan, payload, provider=provider_name, model=model)
+                if enhanced != plan:
+                    plan = enhanced
+                    provider_metadata = {"provider": provider_name, "model": model, "enhancement": "accepted"}
+                else:
+                    provider_metadata = {"provider": provider_name, "model": model, "enhancement": "rejected_or_empty"}
+            except Exception as exc:
+                provider_metadata = {"provider": self.provider_settings.provider_mode.value, "model": self.provider_settings.selected_model(), "enhancement": "failed", "error": redact_secrets(exc)}
+        self.strategy_plan = plan
+        self.strategy_plan_approval = None
+        self.strategy_plan_observations = []
+        self.agentic_execution_authorized = False
+        write_strategy_audit(self.agentic.audit_dir, plan=plan, observations=self.strategy_plan_observations, provider_metadata=provider_metadata)
+        self._refresh_strategy_plan_panel()
+        self._refresh_generation_authorization()
+        self.progress_label.setText("Strategy plan generated. Review and approve it before Agentic Preview or Final.")
+
+    def _approve_strategy_plan(self) -> None:
+        if self.strategy_plan is None:
+            return
+        if self.agentic_revision is None or self.strategy_plan.specification_revision != self.agentic_revision.revision:
+            self.strategy_plan = mark_plan_stale(self.strategy_plan)
+            self.agentic_execution_authorized = False
+            self._refresh_strategy_plan_panel()
+            self._refresh_generation_authorization()
+            return
+        self.strategy_plan, self.strategy_plan_approval = approve_strategy_plan(self.strategy_plan, decision="approved")
+        self.agentic_execution_authorized = True
+        write_strategy_audit(self.agentic.audit_dir, plan=self.strategy_plan, approval=self.strategy_plan_approval, observations=self.strategy_plan_observations)
+        self._refresh_strategy_plan_panel()
+        self._refresh_generation_authorization()
+        self.progress_label.setText("Strategy plan approved. Use explicit Estimate, Preview, or Final buttons to execute deterministic steps.")
+
+    def _reject_strategy_plan(self) -> None:
+        if self.strategy_plan is None:
+            return
+        self.strategy_plan, self.strategy_plan_approval = approve_strategy_plan(self.strategy_plan, decision="rejected")
+        self.agentic_execution_authorized = False
+        write_strategy_audit(self.agentic.audit_dir, plan=self.strategy_plan, approval=self.strategy_plan_approval, observations=self.strategy_plan_observations)
+        self._refresh_strategy_plan_panel()
+        self._refresh_generation_authorization()
+        self.progress_label.setText("Strategy plan rejected. Regenerate or revise the specification.")
+
+    def _export_strategy_plan_json(self) -> None:
+        if self.strategy_plan is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export strategy plan", "strategy_plan.json", "JSON (*.json)")
+        if path:
+            Path(path).write_text(json.dumps(self.strategy_plan.model_dump(mode="json"), indent=2), encoding="utf-8")
+            self.progress_label.setText(f"Strategy plan exported: {path}")
 
     def _parse_agentic_request(self, request: str) -> None:
         if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
@@ -437,6 +556,7 @@ class MainWindow(QMainWindow):
             self._capture_provider_result(result)
             self._refresh_provider_summary()
             self._refresh_agentic_summary()
+            self._refresh_strategy_plan_panel()
             if result.provider_failed:
                 self.progress_label.setText("External provider failed. Deterministic extraction is still available.")
             self.log_panel_message("INFO", f"Agent-assisted request parsed with {len(result.extracted_fields)} proposed fields.")
@@ -509,15 +629,19 @@ class MainWindow(QMainWindow):
                 provider_mode=parsed.provider_mode,
                 superseded_revision=self.agentic_revision.revision if self.agentic_revision else None,
             )
-            self.agentic_execution_authorized = True
+            self.agentic_execution_authorized = False
+            self.strategy_plan = None
+            self.strategy_plan_approval = None
+            self.strategy_plan_observations = []
             self.agentic_state = AgenticWorkflowState.AGENTIC_APPROVED
             self._apply_specification_to_panels(approved)
             self.controller.set_specification(approved)
             self._collect_and_validate()
             self.agentic_request_panel.set_result(parsed, self.agentic.status.value, self.agentic.provider_status)
             self._refresh_agentic_summary()
+            self._refresh_strategy_plan_panel()
             self._refresh_generation_authorization()
-            self.progress_label.setText("Human approved agent-assisted specification. Use Estimate or Generate Preview explicitly.")
+            self.progress_label.setText("Human approved agent-assisted specification. Generate and approve a strategy plan before Preview or Final.")
             gui_event("agentic_specification_approved", approval_id=record.approval_id)
         except Exception as exc:
             self.agentic_state = AgenticWorkflowState.AGENTIC_FAILED
@@ -567,9 +691,13 @@ class MainWindow(QMainWindow):
             if self.agentic_revision is not None:
                 self.agentic_revision.approval_status = "stale"
             self.agentic_execution_authorized = False
+            if self.strategy_plan is not None:
+                self.strategy_plan = mark_plan_stale(self.strategy_plan)
+                write_strategy_audit(self.agentic.audit_dir, plan=self.strategy_plan, approval=self.strategy_plan_approval, observations=self.strategy_plan_observations)
             self.agentic_state = AgenticWorkflowState.AGENTIC_APPROVAL_STALE
             self.agentic_request_panel.set_result(self.agentic.last_result, self.agentic.status.value, self.agentic.provider_status)
             self._refresh_agentic_summary()
+            self._refresh_strategy_plan_panel()
             self._refresh_generation_authorization()
             self._refresh_provider_summary()
 
@@ -579,9 +707,13 @@ class MainWindow(QMainWindow):
         if self.agentic_revision is not None:
             self.agentic_revision.approval_status = "stale"
         self.agentic_execution_authorized = False
+        if self.strategy_plan is not None:
+            self.strategy_plan = mark_plan_stale(self.strategy_plan)
+            write_strategy_audit(self.agentic.audit_dir, plan=self.strategy_plan, approval=self.strategy_plan_approval, observations=self.strategy_plan_observations)
         self.agentic_state = AgenticWorkflowState.AGENTIC_APPROVAL_STALE
         self.progress_label.setText("Approval stale. Review and approve the updated specification.")
         self._refresh_agentic_summary()
+        self._refresh_strategy_plan_panel()
         self._refresh_generation_authorization()
 
     def log_panel_message(self, level: str, message: str) -> None:
@@ -616,6 +748,7 @@ class MainWindow(QMainWindow):
             self.manual_state = ManualWorkflowState.MANUAL_PREVIEWED if payload.get("profile") == "preview" else ManualWorkflowState.MANUAL_FINAL_GENERATED
         else:
             self.agentic_state = AgenticWorkflowState.AGENTIC_PREVIEWED if payload.get("profile") == "preview" else self.agentic_state
+            self._record_plan_observation(observation_for_run(self.strategy_plan, payload) if self.strategy_plan else None)
         run_dir = Path(payload["run_dir"])
         tuning = run_dir / "tuning_history.csv"
         if tuning.exists():
@@ -783,6 +916,27 @@ class MainWindow(QMainWindow):
         self.review_approval_button.setEnabled(self.agentic.last_result is not None)
         self.request_changes_button.setEnabled(self.agentic_approved_specification is not None)
         self.switch_to_manual_button.setEnabled(True)
+
+    def _refresh_strategy_plan_panel(self) -> None:
+        available = self.application_mode == ApplicationMode.AGENTIC_DESIGN and self.agentic_approved_specification is not None
+        self.strategy_plan_box.setVisible(available)
+        self.strategy_plan_panel.set_specification_available(available)
+        self.strategy_plan_panel.set_plan(self.strategy_plan if available else None)
+
+    def _record_plan_observation(self, observation: PlanObservation | None) -> None:
+        if observation is None or self.strategy_plan is None:
+            return
+        self.strategy_plan_observations.append(observation)
+        for step in self.strategy_plan.steps:
+            if step.step_id == observation.step_id:
+                step.execution_status = observation.status
+        write_strategy_audit(
+            self.agentic.audit_dir,
+            plan=self.strategy_plan,
+            approval=self.strategy_plan_approval,
+            observations=self.strategy_plan_observations,
+        )
+        self._refresh_strategy_plan_panel()
 
     def _provider_diagnostics_text(self) -> str:
         settings = self.provider_settings

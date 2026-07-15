@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
 from porous_designer.agentic.contracts import FieldReviewDecision, ProviderMode
 from porous_designer.agentic.credentials import CredentialLookupResult
+from porous_designer.agentic.provider import MockAgentProvider
 from porous_designer.agentic.provider_config import CredentialMode, ExternalCallMode, ProviderSettings
 from porous_designer.domain.enums import DomainShape, StructureFamily
 from porous_designer.domain.specification import (
@@ -490,7 +491,9 @@ def test_agentic_approval_applies_fields_and_does_not_start_preview(qtbot, monke
     assert window.controller.specification.structure.family == StructureFamily.HCP_SPHERICAL_PORES
     assert window.structure_panel.pore_diameter.value() == pytest.approx(1.2)
     assert estimate_calls["count"] == 0
-    assert window.agentic_execution_authorized
+    assert not window.agentic_execution_authorized
+    assert window.strategy_plan is None
+    assert not window.generation_panel.preview_button.isEnabled()
     assert window.controller.worker is None
 
 
@@ -653,6 +656,13 @@ def approve_agentic_hcp(window: MainWindow, monkeypatch):
     return parsed
 
 
+def approve_agentic_hcp_plan(window: MainWindow, monkeypatch):
+    parsed = approve_agentic_hcp(window, monkeypatch)
+    window._generate_strategy_plan()
+    window._approve_strategy_plan()
+    return parsed
+
+
 def test_phase_3b13_manual_and_agentic_modes_are_separate(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
@@ -708,7 +718,7 @@ def test_phase_3b13_agentic_to_manual_creates_editable_copy(qtbot, monkeypatch):
 def test_phase_3b13_stale_agentic_approval_blocks_preview_and_final(qtbot, monkeypatch):
     window = MainWindow()
     qtbot.addWidget(window)
-    approve_agentic_hcp(window, monkeypatch)
+    approve_agentic_hcp_plan(window, monkeypatch)
     assert window.agentic_execution_authorized
     calls = {"preview": 0, "final": 0}
     monkeypatch.setattr(window.controller, "start_preview", lambda **kwargs: calls.__setitem__("preview", calls["preview"] + 1))
@@ -728,6 +738,140 @@ def test_phase_3b13_manual_generation_does_not_require_agentic_approval(qtbot, m
     window._preview_requested()
     assert calls["preview"] == 1
     assert window._run_metadata(user_action="generate_preview")["approval_status"] == "not_required"
+
+
+def test_phase_3b2_agentic_plan_section_hidden_before_approval(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._switch_to_agentic_design(confirm=False)
+    assert window.strategy_plan_box.isHidden()
+
+
+def test_phase_3b2_generate_strategy_plan_appears_after_approval(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp(window, monkeypatch)
+    assert not window.strategy_plan_box.isHidden()
+    assert window.strategy_plan_panel.generate_button.isEnabled()
+
+
+def test_phase_3b2_plan_table_displays_steps(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp(window, monkeypatch)
+    window._generate_strategy_plan()
+    text = window.strategy_plan_panel.plan_text.toPlainText()
+    assert "Estimate resources" in text
+    assert "generate_preview" in text
+
+
+def test_phase_3b2_unsupported_step_note_appears(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._switch_to_agentic_design(confirm=False)
+    window._parse_agentic_request("Create a 4 x 4 x 4 mm HCP scaffold with 1 mm generating sphere diameter and STEP-only output.")
+    parsed = window.agentic.last_result
+    assert parsed is not None
+    monkeypatch.setattr("porous_designer.gui.main_window.SpecificationReviewDialog.exec", lambda self: QDialog.Accepted)
+    monkeypatch.setattr(
+        "porous_designer.gui.main_window.SpecificationReviewDialog.decisions",
+        lambda self: [FieldReviewDecision(field_path=item.field_path, decision="accepted") for item in parsed.extracted_fields],
+    )
+    window._review_agentic_specification()
+    window._generate_strategy_plan()
+    assert "STEP" in window.strategy_plan_panel.plan_text.toPlainText()
+
+
+def test_phase_3b2_approve_and_reject_plan(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp(window, monkeypatch)
+    window._generate_strategy_plan()
+    window._approve_strategy_plan()
+    assert window.strategy_plan is not None
+    assert window.strategy_plan.status == "approved"
+    assert window.agentic_execution_authorized
+    window._reject_strategy_plan()
+    assert window.strategy_plan.status == "rejected"
+    assert not window.agentic_execution_authorized
+
+
+def test_phase_3b2_stale_plan_blocks_execution(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    calls = {"preview": 0, "final": 0}
+    monkeypatch.setattr(window.controller, "start_preview", lambda **kwargs: calls.__setitem__("preview", calls["preview"] + 1))
+    monkeypatch.setattr(window.controller, "start_final", lambda *args, **kwargs: calls.__setitem__("final", calls["final"] + 1))
+    window._request_agentic_changes()
+    assert window.strategy_plan is not None
+    assert window.strategy_plan.status == "stale"
+    window._preview_requested()
+    window._final_requested()
+    assert calls == {"preview": 0, "final": 0}
+
+
+def test_phase_3b2_manual_mode_does_not_show_agentic_plan_section(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.application_mode == ApplicationMode.MANUAL_DESIGN
+    assert window.strategy_plan_box.isHidden()
+
+
+def test_phase_3b2_plan_approval_required_before_agentic_final(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp(window, monkeypatch)
+    calls = {"final": 0}
+    monkeypatch.setattr(window.controller, "start_final", lambda *args, **kwargs: calls.__setitem__("final", calls["final"] + 1))
+    window._final_requested()
+    assert calls["final"] == 0
+    assert "strategy plan" in window.progress_label.text().lower() or "Approval stale" in window.progress_label.text()
+
+
+def test_phase_3b2_user_triggered_estimate_updates_plan_step(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    monkeypatch.setattr(window.controller, "estimate", lambda: {"status": "feasible", "voxel_count": 125, "runtime_class": "small"})
+    window._estimate_requested()
+    assert window.strategy_plan_observations
+    assert window.strategy_plan_observations[-1].tool_name == "estimate_resources"
+
+
+def test_phase_3b2_user_triggered_preview_updates_plan_step(qtbot, monkeypatch, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    payload = {"profile": "preview", "run_id": "preview-run", "run_dir": str(tmp_path), "stl_path": str(tmp_path / "preview.stl")}
+    window._run_completed(payload)
+    assert window.strategy_plan_observations
+    assert window.strategy_plan_observations[-1].tool_name == "generate_preview"
+
+
+def test_phase_3b2_no_automatic_preview_or_final_after_plan_approval(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp(window, monkeypatch)
+    calls = {"preview": 0, "final": 0}
+    monkeypatch.setattr(window.controller, "start_preview", lambda **kwargs: calls.__setitem__("preview", calls["preview"] + 1))
+    monkeypatch.setattr(window.controller, "start_final", lambda *args, **kwargs: calls.__setitem__("final", calls["final"] + 1))
+    window._generate_strategy_plan()
+    window._approve_strategy_plan()
+    assert calls == {"preview": 0, "final": 0}
+
+
+def test_phase_3b2_provider_enhanced_wording_does_not_add_forbidden_tools(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp(window, monkeypatch)
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI)
+    window.provider_settings = settings
+    window.agentic.provider = MockAgentProvider(strategy_response={"summary": "Generate STEP and run FEA.", "tool_proposals": [{"tool_name": "fea"}]})
+    window._generate_strategy_plan()
+    assert window.strategy_plan is not None
+    assert "Generate STEP" not in window.strategy_plan.summary
+    assert not any(step.deterministic_tool == "fea" for step in window.strategy_plan.steps)
 
 
 @pytest.mark.slow

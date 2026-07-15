@@ -130,3 +130,16 @@ folders to explicitly inspect final artifacts.
 
 STEP, FEA, inverse design, cloud deployment, authentication, arbitrary CAD code
 generation, and autonomous geometry generation are disabled in Phase 3B.1.2.
+## Agentic Plan Section
+
+In Agentic Design mode, the Agentic Plan section appears after a specification
+has been approved. Use `Generate Strategy Plan` to create a deterministic
+engineering plan. Review the ordered steps, validation gates, unsupported
+requirements, risks, and user checkpoints before approving.
+
+`Approve Plan` enables user-triggered Agentic Preview and Final for the current
+approved specification revision. It does not start Estimate, Preview, Final, or
+any multi-step chain automatically.
+
+`Reject Plan` leaves Agentic Preview and Final disabled. If the approved
+specification changes, the existing plan becomes stale and must be regenerated.

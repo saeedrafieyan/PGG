@@ -18,10 +18,11 @@ Agentic Porous-Material Design System
 - Phase 3B.1.2: provider activation, credential persistence, and connection
   verification.
 - Phase 3B.1.3: separated Manual Design and Agentic Design workflows.
+- Phase 3B.2: Engineering Strategy Agent and Plan Approval.
 
 ## Current
 
-- Phase 3B.1.3 completion and review.
+- Phase 3B.2 completion and review.
 
 Scope:
 
@@ -34,6 +35,9 @@ Scope:
 - audit files
 - mode-specific generation authorization
 - specification authority and provenance records
+- deterministic strategy planning
+- human plan approval
+- plan observations
 
 Out of scope:
 
@@ -48,5 +52,9 @@ Out of scope:
 
 ## Recommended Next
 
-Phase 3B.2 should add strategy-agent planning and bounded repair without
-relaxing the human approval boundary.
+Phase 3B.3 should add the next bounded agentic capability without relaxing the
+human approval boundary. Recommended scope: richer per-step execution status,
+report export integration from the plan panel, and guarded sensitivity-analysis
+proposal handling. Autonomous repair, STEP generation, FEA, inverse design, and
+material optimization should remain out of scope unless explicitly promoted to a
+future phase.
