@@ -57,6 +57,13 @@ class ApplicationController(QObject):
         self.state.set_specification(spec)
         return not self.spec_model.has_invalid_fields
 
+    def set_specification(self, spec: DesignSpecification) -> None:
+        self.state.set_specification(spec)
+        self.spec_model = SpecificationModel(spec, self)
+        self.spec_model.changed.connect(self._specification_updated)
+        self.spec_model.validation_changed.connect(self.issues_changed)
+        self.specification_changed.emit(spec)
+
     def _specification_updated(self, spec: DesignSpecification) -> None:
         self.specification_changed.emit(spec)
 
@@ -75,13 +82,13 @@ class ApplicationController(QObject):
             self.show_error("SPEC_INVALID", str(exc), repr(exc))
             return None
 
-    def start_preview(self) -> None:
+    def start_preview(self, *, run_metadata: dict | None = None) -> None:
         gui_event("preview_clicked", active_worker=bool(self.worker and self.worker.is_running))
         if self.worker and self.worker.is_running:
             return
-        self._start_worker(PreviewWorker(self.state.specification, self), "preview")
+        self._start_worker(PreviewWorker(self.state.specification, self, run_metadata=run_metadata), "preview")
 
-    def start_final(self, parent=None) -> None:
+    def start_final(self, parent=None, *, run_metadata: dict | None = None) -> None:
         gui_event("final_clicked")
         estimate = self.estimate()
         if not estimate:
@@ -93,7 +100,7 @@ class ApplicationController(QObject):
             if ResourceWarningDialog(estimate, parent).exec() != QDialog.Accepted:
                 self.log.emit("WARNING", "Final generation cancelled before launch after resource warning.")
                 return
-        self._start_worker(GenerationWorker(self.state.specification, self), "final")
+        self._start_worker(GenerationWorker(self.state.specification, self, run_metadata=run_metadata), "final")
 
     def _start_worker(self, worker, label: str) -> None:
         self.worker = worker

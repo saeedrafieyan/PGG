@@ -25,6 +25,11 @@ User request
 
 The agentic layer never starts preview or final generation.
 
+Phase 3B.1.3 separates the GUI into Manual Design and Agentic Design modes.
+Agentic approval creates an approved specification revision and a read-only
+summary. Manual widgets are not independently editable while Agentic Design is
+active.
+
 ## Packages
 
 - `agentic.contracts`: strict Pydantic schemas for parsed fields,
@@ -41,8 +46,9 @@ The agentic layer never starts preview or final generation.
 
 The `Agentic Request` panel displays parsed fields and ambiguities. The
 `SpecificationReviewDialog` is the only GUI path that can approve parsed
-fields. Approved fields populate existing GUI widgets and then reuse existing
-`DesignSpecification` validation.
+fields. Approved fields create an agentic approved specification revision. The
+GUI then shows a read-only approved-specification summary and uses explicit
+generation authorization checks before Estimate, Preview, or Final actions.
 
 Phase 3B.1.1 adds optional OpenAI and Gemini providers behind the same
 provider-neutral interface. The deterministic call policy decides whether an

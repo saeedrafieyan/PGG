@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QSettings, Signal
 
 from porous_designer.domain.enums import DomainShape, ExportFormat, StructureFamily
 from porous_designer.domain.specification import (
@@ -18,6 +18,7 @@ from porous_designer.domain.specification import (
     StructureSpec,
     TargetsSpec,
 )
+from porous_designer.gui.workflow import ApplicationMode
 
 
 @dataclass
@@ -32,6 +33,8 @@ class GuiSettings:
     ui_theme: str = "light"
     log_level: str = "INFO"
     external_agent_access: bool = False
+    application_mode: str = ApplicationMode.MANUAL_DESIGN.value
+    ask_mode_at_startup: bool = False
 
 
 def default_specification(settings: GuiSettings | None = None) -> DesignSpecification:
@@ -92,12 +95,15 @@ class StateStore(QObject):
 
     def update_settings(self, settings: GuiSettings) -> None:
         self._settings = settings
+        self._ensure_settings_identity()
         q = QSettings()
         for key, value in settings.__dict__.items():
             q.setValue(key, value)
+        q.sync()
         self.settings_changed.emit(settings)
 
     def _load_settings(self) -> GuiSettings:
+        self._ensure_settings_identity()
         q = QSettings()
         data = GuiSettings()
         for key, default in data.__dict__.items():
@@ -106,5 +112,19 @@ class StateStore(QObject):
                 value = str(value).lower() in {"1", "true", "yes"}
             elif isinstance(default, float):
                 value = float(value)
+            elif key == "application_mode":
+                try:
+                    value = ApplicationMode(str(value)).value
+                except ValueError:
+                    value = ApplicationMode.MANUAL_DESIGN.value
             setattr(data, key, value)
         return data
+
+    def _ensure_settings_identity(self) -> None:
+        app = QCoreApplication.instance()
+        if app is None:
+            return
+        if not app.organizationName():
+            app.setOrganizationName("Federica Research Lab")
+        if not app.applicationName():
+            app.setApplicationName("PGG, Porous Geometry Generation")

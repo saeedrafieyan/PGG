@@ -24,24 +24,26 @@ runtime and rendering diagnostics, including GPU/OpenGL details.
 
 ## Basic Workflow
 
-1. Set the output name and output folder.
-2. Choose a box or cylinder domain.
-3. Choose a structure family.
-4. Enter the relevant geometric fields.
-5. Set target porosity and tolerance.
-6. Choose preview/final resolutions.
-7. Optionally use `Agentic Request` to parse a natural-language request.
-8. Review and explicitly approve proposed agent-assisted fields.
-9. Click `Estimate`.
-10. Click `Generate Preview`.
-11. Inspect the preview mesh.
-12. Click `Generate Final` when the estimate is acceptable.
-13. Review validation results.
-14. Export the HTML report.
+1. Choose `Manual Design` or `Agentic Design`.
+2. In Manual Design, set the output name and output folder.
+3. Choose a box or cylinder domain.
+4. Choose a structure family.
+5. Enter the relevant geometric fields.
+6. Set target porosity and tolerance.
+7. Choose preview/final resolutions.
+8. Click `Estimate`.
+9. Click `Generate Preview`.
+10. Inspect the preview mesh.
+11. Click `Generate Final` when the estimate is acceptable.
+12. Review validation results.
+13. Export the HTML report.
+
+Manual Design and Agentic Design are separate workflows. Manual fields are not
+editable in Agentic Design.
 
 ## Agentic Request
 
-The `Agentic Request` section is agent-assisted, not autonomous. It includes:
+Agentic Design is agent-assisted, not autonomous. It includes:
 
 - natural-language request text area
 - `Parse Request`
@@ -57,9 +59,9 @@ The `Agentic Request` section is agent-assisted, not autonomous. It includes:
 - unresolved ambiguity count
 - `Review Proposed Specification`
 
-Parsing does not change the active specification. Approval requires the review
-dialog. After approval, the GUI runs deterministic validation and feasibility
-estimation, but it does not start preview or final generation.
+Parsing does not change the Manual Design draft. Approval requires the review
+dialog. After approval, the GUI shows a read-only approved specification summary
+and waits for explicit Estimate, Preview, or Final actions.
 
 ## Agent Provider Settings
 

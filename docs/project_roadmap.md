@@ -15,10 +15,13 @@ Agentic Porous-Material Design System
 - Phase 3B.1: human-supervised natural-language requirement interpretation.
 - Phase 3B.1.1: secure optional low-cost OpenAI/Gemini provider integration
   and deterministic/provider evaluation.
+- Phase 3B.1.2: provider activation, credential persistence, and connection
+  verification.
+- Phase 3B.1.3: separated Manual Design and Agentic Design workflows.
 
 ## Current
 
-- Phase 3B.1.1 completion and review.
+- Phase 3B.1.3 completion and review.
 
 Scope:
 
@@ -29,6 +32,8 @@ Scope:
 - field-by-field review
 - explicit human approval
 - audit files
+- mode-specific generation authorization
+- specification authority and provenance records
 
 Out of scope:
 
@@ -43,5 +48,5 @@ Out of scope:
 
 ## Recommended Next
 
-Phase 3B.2 should deepen provider integration, review ergonomics, and
-feasibility explanations without relaxing the human approval boundary.
+Phase 3B.2 should add strategy-agent planning and bounded repair without
+relaxing the human approval boundary.

@@ -50,8 +50,9 @@ Legacy scripts are preserved for comparison, but new development should use the
 
 ## Agent-Assisted Requests
 
-The GUI includes an `Agentic Request` section. It can parse natural-language
-requests into proposed typed fields, show confidence/evidence, detect
+The GUI has separate `Manual Design` and `Agentic Design` modes. Manual Design
+lets users enter engineering parameters directly. Agentic Design can parse
+natural-language requests into proposed typed fields, show confidence/evidence, detect
 ambiguities, and require field-by-field human approval before applying anything
 to the active specification.
 
@@ -67,6 +68,10 @@ keys are never stored in QSettings and are never repopulated into the password
 field; credential availability is shown separately. The Agentic Request panel
 shows call mode, provider, model, credential status, last decision, and last
 execution.
+
+Phase 3B.1.3 separates workflow authority: manual fields are hidden while
+Agentic Design is active, approved agentic specifications are shown read-only,
+and stale agentic approvals block preview/final generation.
 
 ## Spec File Format
 
@@ -106,7 +111,8 @@ output:       sample
 - Renderer and OpenGL details are available from the GUI `Diagnostics` action;
   the normal preview panel shows only a compact preview/final status row.
 - FEA, inverse design, cloud deployment, authentication, autonomous generation,
-  and arbitrary CAD code generation are not part of Phase 3B.1.2.
+  strategy-agent planning, bounded repair, and arbitrary CAD code generation are
+  not part of Phase 3B.1.3.
 
 ## Example
 

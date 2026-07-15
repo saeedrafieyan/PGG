@@ -10,11 +10,12 @@ Approval requires:
 3. field-by-field review
 4. explicit `Approve Resolved Specification`
 
-Approved fields are applied to existing GUI widgets. The current
-`SpecificationModel` then validates the resulting `DesignSpecification`.
+Approved fields create a new agentic approved specification revision. In
+Agentic Design mode the normal manual editing forms are hidden and a read-only
+summary is shown.
 
-After approval, deterministic feasibility estimation runs. Preview and final
-generation remain separate user actions.
+After approval, Estimate, Preview, and Final remain separate user actions.
 
 If the user manually edits a scientific field after approval, the approval state
-becomes stale and the previous approval audit record is preserved.
+becomes stale and the previous approval audit record is preserved. Stale
+approval blocks agentic Preview and Final generation.

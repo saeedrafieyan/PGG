@@ -1,7 +1,6 @@
 # Natural-Language Requests
 
-Phase 3B.1 accepts natural-language scaffold requests in the `Agentic Request`
-GUI section.
+Phase 3B.1 accepts natural-language scaffold requests in Agentic Design mode.
 
 Supported deterministic extraction includes:
 
@@ -25,7 +24,8 @@ Examples are built into the GUI:
 - unsupported STEP-only request
 
 The parser proposes fields with confidence and evidence. It does not directly
-modify the active specification.
+modify the Manual Design draft. Human review is required before an agentic
+approved specification can authorize generation.
 
 When external providers are enabled, deterministic parsing still runs first.
 The call policy avoids unnecessary external calls for complete, unambiguous

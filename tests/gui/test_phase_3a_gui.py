@@ -36,6 +36,7 @@ from porous_designer.gui.state_store import StateStore
 from porous_designer.gui.workers.base_worker import ProcessWorker
 from porous_designer.gui.workers.generation_worker import GenerationWorker
 from porous_designer.gui.workers.preview_worker import PreviewWorker
+from porous_designer.gui.workflow import ApplicationMode
 
 
 def small_spec(tmp_path: Path, name: str = "gui_small") -> DesignSpecification:
@@ -90,6 +91,7 @@ def test_application_launch(qtbot):
     qtbot.addWidget(window)
     assert window.windowTitle() == "PGG, Porous Geometry Generation"
     assert window.generation_panel.final_button.isEnabled()
+    assert window.application_mode == ApplicationMode.MANUAL_DESIGN
 
 
 def test_specification_field_binding_and_domain_switch(qtbot):
@@ -423,6 +425,7 @@ def test_html_report_generation(qtbot, tmp_path: Path):
 def test_agentic_panel_accepts_text_and_parses_structured_only(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
+    window._switch_to_agentic_design(confirm=False)
     panel = window.agentic_request_panel
     panel.request_text.setPlainText("Generate an 8 x 14 x 8 mm scaffold with hexagonal packing and 75-80% porosity.")
     window._parse_agentic_request(panel.request_text.toPlainText())
@@ -460,6 +463,7 @@ def test_specification_review_dialog_reject_and_edit(qtbot):
 def test_agentic_approval_applies_fields_and_does_not_start_preview(qtbot, monkeypatch):
     window = MainWindow()
     qtbot.addWidget(window)
+    window._switch_to_agentic_design(confirm=False)
     window._parse_agentic_request("Create a 10 x 10 x 5 mm HCP scaffold with 1.2 mm generating sphere diameter and 72% porosity.")
     parsed = window.agentic.last_result
     assert parsed is not None
@@ -485,13 +489,15 @@ def test_agentic_approval_applies_fields_and_does_not_start_preview(qtbot, monke
     window._review_agentic_specification()
     assert window.controller.specification.structure.family == StructureFamily.HCP_SPHERICAL_PORES
     assert window.structure_panel.pore_diameter.value() == pytest.approx(1.2)
-    assert estimate_calls["count"] == 1
+    assert estimate_calls["count"] == 0
+    assert window.agentic_execution_authorized
     assert window.controller.worker is None
 
 
 def test_agentic_approval_becomes_stale_after_manual_edit(qtbot, monkeypatch):
     window = MainWindow()
     qtbot.addWidget(window)
+    window._switch_to_agentic_design(confirm=False)
     window._parse_agentic_request("Create a 4 x 4 x 4 mm HCP scaffold with 1 mm generating sphere diameter.")
     parsed = window.agentic.last_result
     assert parsed is not None
@@ -598,6 +604,7 @@ def test_provider_test_connection_enables_temporary_session_key(qtbot, monkeypat
 def test_agentic_call_decision_display_and_no_external_call(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
+    window._switch_to_agentic_design(confirm=False)
     window._parse_agentic_request("Create a 4 x 4 x 4 mm HCP scaffold with 70% porosity.")
     result = window.agentic.last_result
     assert result is not None
@@ -627,6 +634,100 @@ def test_provider_diagnostics_redacts_key(qtbot):
     text = window._provider_diagnostics_text()
     assert "sk-testSECRET123456" not in text
     assert "[REDACTED]" in text
+
+
+def approve_agentic_hcp(window: MainWindow, monkeypatch):
+    window._switch_to_agentic_design(confirm=False)
+    window._parse_agentic_request("Create a 4 x 4 x 4 mm HCP scaffold with 1 mm generating sphere diameter and 70% porosity.")
+    parsed = window.agentic.last_result
+    assert parsed is not None
+    monkeypatch.setattr(
+        "porous_designer.gui.main_window.SpecificationReviewDialog.exec",
+        lambda self: QDialog.Accepted,
+    )
+    monkeypatch.setattr(
+        "porous_designer.gui.main_window.SpecificationReviewDialog.decisions",
+        lambda self: [FieldReviewDecision(field_path=item.field_path, decision="accepted") for item in parsed.extracted_fields],
+    )
+    window._review_agentic_specification()
+    return parsed
+
+
+def test_phase_3b13_manual_and_agentic_modes_are_separate(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.application_mode == ApplicationMode.MANUAL_DESIGN
+    assert window.agentic_group.isHidden()
+    assert not window.domain_group.isHidden()
+    assert window.generation_panel.preview_resolution.isEnabled()
+
+    window._switch_to_agentic_design(confirm=False)
+    assert window.application_mode == ApplicationMode.AGENTIC_DESIGN
+    assert window.domain_group.isHidden()
+    assert not window.agentic_group.isHidden()
+    assert not window.agentic_summary_box.isHidden()
+    assert not window.generation_panel.preview_resolution.isEnabled()
+
+
+def test_phase_3b13_mode_persists_after_restart(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._switch_to_agentic_design(confirm=False)
+    restarted = MainWindow()
+    qtbot.addWidget(restarted)
+    assert restarted.application_mode == ApplicationMode.AGENTIC_DESIGN
+    assert restarted.domain_group.isHidden()
+
+
+def test_phase_3b13_manual_mode_blocks_provider_parse(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._parse_agentic_request("Create a 4 x 4 x 4 mm HCP scaffold.")
+    assert window.agentic.last_result is None
+    assert "Switch to Agentic Design" in window.progress_label.text()
+
+
+def test_phase_3b13_agentic_to_manual_creates_editable_copy(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp(window, monkeypatch)
+    approval = window.agentic.last_approval
+    assert approval is not None
+    assert window.agentic_revision is not None
+    assert window.agentic_revision.approval_status == "approved"
+
+    window._switch_to_manual_design(confirm=False)
+    assert window.application_mode == ApplicationMode.MANUAL_DESIGN
+    assert window.manual_revision.origin == "derived_from_agentic_specification"
+    assert window.agentic.last_approval is approval
+    assert window.agentic_execution_authorized is False
+    assert not window.domain_group.isHidden()
+    assert window.domain_panel.box_x.isEnabled()
+
+
+def test_phase_3b13_stale_agentic_approval_blocks_preview_and_final(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp(window, monkeypatch)
+    assert window.agentic_execution_authorized
+    calls = {"preview": 0, "final": 0}
+    monkeypatch.setattr(window.controller, "start_preview", lambda **kwargs: calls.__setitem__("preview", calls["preview"] + 1))
+    monkeypatch.setattr(window.controller, "start_final", lambda *args, **kwargs: calls.__setitem__("final", calls["final"] + 1))
+    window._request_agentic_changes()
+    window._preview_requested()
+    window._final_requested()
+    assert calls == {"preview": 0, "final": 0}
+    assert "Approval stale" in window.progress_label.text()
+
+
+def test_phase_3b13_manual_generation_does_not_require_agentic_approval(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    calls = {"preview": 0}
+    monkeypatch.setattr(window.controller, "start_preview", lambda **kwargs: calls.__setitem__("preview", calls["preview"] + 1))
+    window._preview_requested()
+    assert calls["preview"] == 1
+    assert window._run_metadata(user_action="generate_preview")["approval_status"] == "not_required"
 
 
 @pytest.mark.slow

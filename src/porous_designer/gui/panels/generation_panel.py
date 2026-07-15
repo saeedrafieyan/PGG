@@ -77,6 +77,18 @@ class GenerationPanel(QWidget):
         self.preview_button.setEnabled(enabled)
         self.final_button.setEnabled(enabled and final_allowed)
 
+    def set_inputs_enabled(self, enabled: bool) -> None:
+        for widget in (
+            self.profile,
+            self.preview_resolution,
+            self.final_resolution,
+            self.reference_resolution,
+            self.maximum_memory,
+            self.maximum_runtime,
+            self.stl_enabled,
+        ):
+            widget.setEnabled(enabled)
+
     def set_busy(self, busy: bool) -> None:
         for widget in (
             self.estimate_button,

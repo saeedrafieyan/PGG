@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDialog,
     QDockWidget,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
+    QPushButton,
     QScrollArea,
     QSplitter,
     QTabWidget,
+    QTextEdit,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -49,6 +55,14 @@ from porous_designer.gui.panels.structure_panel import StructurePanel
 from porous_designer.gui.panels.targets_panel import TargetsPanel
 from porous_designer.gui.panels.validation_panel import ValidationPanel
 from porous_designer.gui.state_store import StateStore
+from porous_designer.gui.workflow import (
+    AgenticWorkflowState,
+    ApplicationMode,
+    ManualWorkflowState,
+    SpecificationRevision,
+    approved_agentic_revision,
+    new_manual_revision,
+)
 
 
 def group(title: str, widget: QWidget) -> QGroupBox:
@@ -69,6 +83,15 @@ class MainWindow(QMainWindow):
         self.controller = ApplicationController(self.state, self.history_store, self)
         self.provider_settings = load_provider_settings()
         self.agentic = AgenticRequestOrchestrator(provider_from_settings(self.provider_settings), audit_root=Path("runs"), settings=self.provider_settings)
+        self.application_mode = ApplicationMode(self.state.settings.application_mode)
+        self.manual_state = ManualWorkflowState.MANUAL_EMPTY
+        self.agentic_state = AgenticWorkflowState.AGENTIC_REQUEST_EMPTY
+        self.manual_draft_specification = self.controller.specification
+        self.agentic_proposed_specification = None
+        self.agentic_approved_specification = None
+        self.manual_revision = new_manual_revision(self.manual_draft_specification)
+        self.agentic_revision: SpecificationRevision | None = None
+        self.agentic_execution_authorized = False
         self._last_provider_test = "Not tested"
         self._last_provider_decision = "none"
         self._last_provider_execution = "none"
@@ -78,6 +101,7 @@ class MainWindow(QMainWindow):
         self._connect()
         self._collect_and_validate()
         self._refresh_provider_summary()
+        self._apply_application_mode(self.application_mode)
         gui_event("main_window_constructed")
 
     def _build_ui(self) -> None:
@@ -87,6 +111,21 @@ class MainWindow(QMainWindow):
         toolbar.addAction("Diagnostics", self._show_diagnostics)
         toolbar.addAction("Agent Provider Settings", self._show_provider_settings)
         toolbar.addAction("Open Output Folder", self.controller.open_output_folder)
+
+        self.mode_banner = QLabel()
+        self.mode_banner.setWordWrap(True)
+        self.manual_mode_button = QPushButton("Manual Design")
+        self.manual_mode_button.setCheckable(True)
+        self.agentic_mode_button = QPushButton("Agentic Design")
+        self.agentic_mode_button.setCheckable(True)
+        self.mode_buttons = QButtonGroup(self)
+        self.mode_buttons.setExclusive(True)
+        self.mode_buttons.addButton(self.manual_mode_button)
+        self.mode_buttons.addButton(self.agentic_mode_button)
+        self.manual_mode_hint = QLabel("Enter engineering parameters directly.")
+        self.agentic_mode_hint = QLabel("Describe the porous material and review the proposed design.")
+        for label in (self.manual_mode_hint, self.agentic_mode_hint):
+            label.setWordWrap(True)
 
         self.request_panel = RequestPanel()
         self.agentic_request_panel = AgenticRequestPanel()
@@ -98,16 +137,53 @@ class MainWindow(QMainWindow):
         left = QWidget()
         left.setMinimumWidth(430)
         left_layout = QVBoxLayout(left)
-        for title, panel in (
-            ("Request", self.request_panel),
-            ("Agentic Request", self.agentic_request_panel),
-            ("Domain", self.domain_panel),
-            ("Structure", self.structure_panel),
-            ("Targets and Constraints", self.targets_panel),
-            ("Manufacturing", self.manufacturing_panel),
-            ("Generation", self.generation_panel),
+        left_layout.addWidget(self.mode_banner)
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self.manual_mode_button)
+        mode_row.addWidget(self.agentic_mode_button)
+        left_layout.addLayout(mode_row)
+        left_layout.addWidget(self.manual_mode_hint)
+        left_layout.addWidget(self.agentic_mode_hint)
+        self.request_group = group("Manual Output", self.request_panel)
+        self.agentic_group = group("Agentic Design, Interpretation Stage", self.agentic_request_panel)
+        self.domain_group = group("Domain", self.domain_panel)
+        self.structure_group = group("Structure", self.structure_panel)
+        self.targets_group = group("Targets and Constraints", self.targets_panel)
+        self.manufacturing_group = group("Manufacturing", self.manufacturing_panel)
+        self.agentic_summary = QTextEdit()
+        self.agentic_summary.setReadOnly(True)
+        self.agentic_summary.setPlaceholderText("Approved agentic specification summary appears after human review.")
+        summary_buttons = QHBoxLayout()
+        self.review_approval_button = QPushButton("Review Approval")
+        self.request_changes_button = QPushButton("Request Changes")
+        self.switch_to_manual_button = QPushButton("Switch to Manual Design")
+        self.switch_to_agentic_button = QPushButton("Switch to Agentic Design")
+        for button in (self.review_approval_button, self.request_changes_button, self.switch_to_manual_button):
+            summary_buttons.addWidget(button)
+        self.agentic_summary_box = QGroupBox("Approved Specification Summary")
+        summary_layout = QVBoxLayout(self.agentic_summary_box)
+        summary_layout.addWidget(self.agentic_summary)
+        summary_layout.addLayout(summary_buttons)
+        self.generation_group = group("Generation", self.generation_panel)
+        self.manual_groups = [
+            self.request_group,
+            self.domain_group,
+            self.structure_group,
+            self.targets_group,
+            self.manufacturing_group,
+        ]
+        for box in (
+            self.request_group,
+            self.agentic_group,
+            self.domain_group,
+            self.structure_group,
+            self.targets_group,
+            self.manufacturing_group,
+            self.agentic_summary_box,
+            self.generation_group,
         ):
-            left_layout.addWidget(group(title, panel))
+            left_layout.addWidget(box)
+        left_layout.addWidget(self.switch_to_agentic_button)
         left_layout.addStretch()
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
@@ -156,6 +232,12 @@ class MainWindow(QMainWindow):
         for panel in (self.request_panel, self.domain_panel, self.structure_panel, self.targets_panel, self.manufacturing_panel, self.generation_panel):
             panel.changed.connect(self._collect_and_validate)
             panel.changed.connect(self._mark_agentic_approval_stale)
+        self.manual_mode_button.clicked.connect(lambda: self._switch_to_manual_design(confirm=True))
+        self.agentic_mode_button.clicked.connect(lambda: self._switch_to_agentic_design(confirm=True))
+        self.switch_to_manual_button.clicked.connect(lambda: self._switch_to_manual_design(confirm=True))
+        self.switch_to_agentic_button.clicked.connect(lambda: self._switch_to_agentic_design(confirm=True))
+        self.review_approval_button.clicked.connect(self._review_agentic_specification)
+        self.request_changes_button.clicked.connect(self._request_agentic_changes)
         self.agentic_request_panel.parse_requested.connect(self._parse_agentic_request)
         self.agentic_request_panel.external_interpret_requested.connect(self._interpret_with_external_model)
         self.agentic_request_panel.review_requested.connect(self._review_agentic_specification)
@@ -165,9 +247,9 @@ class MainWindow(QMainWindow):
         self.request_panel.load_requested.connect(lambda: self.controller.load_specification(self))
         self.request_panel.save_requested.connect(lambda: self.controller.save_specification(self))
         self.request_panel.report_requested.connect(lambda: self.controller.export_report(self))
-        self.generation_panel.estimate_requested.connect(self.controller.estimate)
-        self.generation_panel.preview_requested.connect(self.controller.start_preview)
-        self.generation_panel.final_requested.connect(lambda: self.controller.start_final(self))
+        self.generation_panel.estimate_requested.connect(self._estimate_requested)
+        self.generation_panel.preview_requested.connect(self._preview_requested)
+        self.generation_panel.final_requested.connect(self._final_requested)
         self.generation_panel.cancel_requested.connect(self.controller.cancel)
         self.controller.estimate_changed.connect(self.feasibility_panel.set_estimate)
         self.controller.estimate_changed.connect(self._estimate_changed)
@@ -188,25 +270,178 @@ class MainWindow(QMainWindow):
         return data
 
     def _collect_and_validate(self) -> None:
+        if self.application_mode == ApplicationMode.AGENTIC_DESIGN and not self._applying_agentic_specification:
+            self._refresh_generation_authorization()
+            return
         valid = self.controller.update_specification_from_fields(self._field_values())
+        if valid and self.application_mode == ApplicationMode.MANUAL_DESIGN:
+            self.manual_state = ManualWorkflowState.MANUAL_VALID
+            self.manual_draft_specification = self.controller.specification
         self.generation_panel.set_generation_enabled(valid)
+        self._refresh_generation_authorization()
+
+    def _apply_application_mode(self, mode: ApplicationMode) -> None:
+        self.application_mode = mode
+        self.manual_mode_button.setChecked(mode == ApplicationMode.MANUAL_DESIGN)
+        self.agentic_mode_button.setChecked(mode == ApplicationMode.AGENTIC_DESIGN)
+        manual = mode == ApplicationMode.MANUAL_DESIGN
+        for group_box in self.manual_groups:
+            group_box.setVisible(manual)
+        self.agentic_group.setVisible(not manual)
+        self.agentic_summary_box.setVisible(not manual)
+        self.switch_to_agentic_button.setVisible(manual)
+        self.generation_panel.set_inputs_enabled(manual)
+        self.mode_banner.setText(
+            "Mode: Manual Design" if manual else "Mode: Agentic Design, Interpretation Stage"
+        )
+        self.manual_mode_hint.setVisible(manual)
+        self.agentic_mode_hint.setVisible(not manual)
+        self._persist_application_mode()
+        self._refresh_agentic_summary()
+        self._refresh_generation_authorization()
+        gui_event("application_mode_changed", mode=mode.value)
+
+    def _persist_application_mode(self) -> None:
+        settings = deepcopy(self.state.settings)
+        settings.application_mode = self.application_mode.value
+        self.state.update_settings(settings)
+
+    def _switch_to_manual_design(self, *, confirm: bool) -> None:
+        if self.application_mode == ApplicationMode.MANUAL_DESIGN:
+            return
+        if self.controller.worker and self.controller.worker.is_running:
+            if QMessageBox.question(self, "Switch Mode", "A generation task is running. Cancel it and switch to Manual Design?") != QMessageBox.Yes:
+                return
+            self.controller.cancel()
+        if confirm:
+            message = (
+                "Switching to Manual Design creates an editable copy.\n"
+                "The previous agentic approval will be preserved but will no longer authorize this modified specification."
+            )
+            if QMessageBox.question(self, "Switch to Manual Design", message) != QMessageBox.Yes:
+                return
+        source = self.agentic_approved_specification or self.agentic_proposed_specification or self.controller.specification
+        copied = source.model_copy(deep=True)
+        self.manual_draft_specification = copied
+        previous = self.agentic_revision.revision if self.agentic_revision else None
+        self.manual_revision = new_manual_revision(copied, origin="derived_from_agentic_specification", superseded_revision=previous)
+        self.agentic_execution_authorized = False
+        self.controller.set_specification(copied)
+        self._apply_specification_to_panels(copied)
+        self._apply_application_mode(ApplicationMode.MANUAL_DESIGN)
+        self._collect_and_validate()
+
+    def _switch_to_agentic_design(self, *, confirm: bool) -> None:
+        if self.application_mode == ApplicationMode.AGENTIC_DESIGN:
+            return
+        if self.controller.worker and self.controller.worker.is_running:
+            if QMessageBox.question(self, "Switch Mode", "A generation task is running. Cancel it and switch to Agentic Design?") != QMessageBox.Yes:
+                return
+            self.controller.cancel()
+        if confirm:
+            message = "Switch to Agentic Design?\n\nChoose Yes to use the current manual specification as read-only context. Choose No to start with a fresh request."
+            answer = QMessageBox.question(self, "Switch to Agentic Design", message, QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            if answer == QMessageBox.Cancel:
+                return
+            if answer == QMessageBox.Yes:
+                self.agentic_proposed_specification = self.controller.specification.model_copy(deep=True)
+        else:
+            self.agentic_proposed_specification = self.controller.specification.model_copy(deep=True)
+        self.agentic_approved_specification = None
+        self.agentic_revision = None
+        self.agentic_execution_authorized = False
+        self.agentic_state = AgenticWorkflowState.AGENTIC_REQUEST_EMPTY
+        self._apply_application_mode(ApplicationMode.AGENTIC_DESIGN)
+
+    def _agentic_generation_authorized(self) -> bool:
+        return (
+            self.application_mode == ApplicationMode.AGENTIC_DESIGN
+            and self.agentic_approved_specification is not None
+            and self.agentic_revision is not None
+            and self.agentic_revision.approval_status == "approved"
+            and self.agentic_execution_authorized
+        )
+
+    def _refresh_generation_authorization(self) -> None:
+        if self.application_mode == ApplicationMode.MANUAL_DESIGN:
+            self.generation_panel.estimate_button.setEnabled(True)
+            return
+        authorized = self._agentic_generation_authorized()
+        self.generation_panel.estimate_button.setEnabled(authorized)
+        self.generation_panel.preview_button.setEnabled(authorized)
+        self.generation_panel.final_button.setEnabled(authorized)
+        if not authorized and self.agentic_revision and self.agentic_revision.approval_status == "stale":
+            self.progress_label.setText("Approval stale. Review and approve the updated specification.")
+
+    def _run_metadata(self, *, user_action: str) -> dict:
+        revision = self.manual_revision if self.application_mode == ApplicationMode.MANUAL_DESIGN else self.agentic_revision
+        metadata = revision.to_run_metadata(self.application_mode) if revision else {"application_mode": self.application_mode.value}
+        metadata.update(
+            {
+                "user_action": user_action,
+                "manual_workflow_state": self.manual_state.value,
+                "agentic_workflow_state": self.agentic_state.value,
+                "provider": self.provider_settings.provider_mode.value,
+                "model": self.provider_settings.selected_model(),
+                "external_call_mode": self.provider_settings.external_call_mode.value,
+                "stale_approval": bool(self.agentic_revision and self.agentic_revision.approval_status == "stale"),
+            }
+        )
+        return metadata
+
+    def _estimate_requested(self) -> None:
+        if self.application_mode == ApplicationMode.AGENTIC_DESIGN and not self._agentic_generation_authorized():
+            self.progress_label.setText("Approval stale. Review and approve the updated specification.")
+            return
+        estimate = self.controller.estimate()
+        if estimate:
+            if self.application_mode == ApplicationMode.MANUAL_DESIGN:
+                self.manual_state = ManualWorkflowState.MANUAL_ESTIMATED
+            else:
+                self.agentic_state = AgenticWorkflowState.AGENTIC_ESTIMATED
+
+    def _preview_requested(self) -> None:
+        if self.application_mode == ApplicationMode.AGENTIC_DESIGN and not self._agentic_generation_authorized():
+            self.progress_label.setText("Approval stale. Review and approve the updated specification.")
+            return
+        self.controller.start_preview(run_metadata=self._run_metadata(user_action="generate_preview"))
+
+    def _final_requested(self) -> None:
+        if self.application_mode == ApplicationMode.AGENTIC_DESIGN and not self._agentic_generation_authorized():
+            self.progress_label.setText("Approval stale. Review and approve the updated specification.")
+            return
+        self.controller.start_final(self, run_metadata=self._run_metadata(user_action="generate_final"))
 
     def _parse_agentic_request(self, request: str) -> None:
+        if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
+            self.progress_label.setText("Switch to Agentic Design before parsing natural-language requests.")
+            return
         request = request.strip()
         if not request:
             self.agentic_request_panel.set_result(None, "Request not parsed", self.agentic.provider_status)
+            self.agentic_state = AgenticWorkflowState.AGENTIC_REQUEST_EMPTY
             return
         gui_event("agentic_parse_requested", character_count=len(request))
         self.agentic_request_panel.set_busy(True)
+        self.agentic_state = AgenticWorkflowState.AGENTIC_PARSING
         try:
             result = self.agentic.parse_request(request, self.controller.specification)
+            self.agentic_proposed_specification = self.agentic.last_proposal
+            self.agentic_execution_authorized = False
+            self.agentic_state = (
+                AgenticWorkflowState.AGENTIC_CLARIFICATION_REQUIRED
+                if any(a.mandatory and not a.resolved_choice for a in result.ambiguities)
+                else AgenticWorkflowState.AGENTIC_PROPOSAL_READY
+            )
             self.agentic_request_panel.set_result(result, self.agentic.status.value, self.agentic.provider_status)
             self._capture_provider_result(result)
             self._refresh_provider_summary()
+            self._refresh_agentic_summary()
             if result.provider_failed:
                 self.progress_label.setText("External provider failed. Deterministic extraction is still available.")
             self.log_panel_message("INFO", f"Agent-assisted request parsed with {len(result.extracted_fields)} proposed fields.")
         except Exception as exc:
+            self.agentic_state = AgenticWorkflowState.AGENTIC_FAILED
             gui_event("agentic_parse_failed", error=str(exc))
             self.agentic_request_panel.set_result(None, "Parser failed", str(exc))
             self.controller.show_error("SPEC_INVALID", "Agent-assisted request parsing failed.", repr(exc))
@@ -214,6 +449,9 @@ class MainWindow(QMainWindow):
             self.agentic_request_panel.set_busy(False)
 
     def _interpret_with_external_model(self, request: str) -> None:
+        if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
+            self.progress_label.setText("Switch to Agentic Design before using external interpretation.")
+            return
         request = request.strip()
         if not request:
             self.agentic_request_panel.set_result(None, "Request not parsed", self.agentic.provider_status)
@@ -233,6 +471,7 @@ class MainWindow(QMainWindow):
         original_provider = self.agentic.provider
         self.agentic.settings = forced
         self.agentic.provider = provider_from_settings(forced)
+        self.agentic_state = AgenticWorkflowState.AGENTIC_EXTERNAL_INTERPRETATION
         try:
             self._parse_agentic_request(request)
         finally:
@@ -241,9 +480,13 @@ class MainWindow(QMainWindow):
             self._refresh_provider_summary()
 
     def _review_agentic_specification(self) -> None:
+        if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
+            self.progress_label.setText("Switch to Agentic Design before reviewing agentic proposals.")
+            return
         parsed = self.agentic.last_result
         if parsed is None:
             return
+        self.agentic_state = AgenticWorkflowState.AGENTIC_REVIEWING
         mandatory = [item for item in parsed.ambiguities if item.mandatory and not item.resolved_choice]
         if mandatory:
             ambiguity_dialog = AmbiguityResolutionDialog(mandatory, self)
@@ -259,14 +502,25 @@ class MainWindow(QMainWindow):
             return
         try:
             approved, record = self.agentic.approve(self.controller.specification, dialog.decisions())
+            self.agentic_approved_specification = approved.model_copy(deep=True)
+            self.agentic_revision = approved_agentic_revision(
+                approved,
+                approval_id=record.approval_id,
+                provider_mode=parsed.provider_mode,
+                superseded_revision=self.agentic_revision.revision if self.agentic_revision else None,
+            )
+            self.agentic_execution_authorized = True
+            self.agentic_state = AgenticWorkflowState.AGENTIC_APPROVED
             self._apply_specification_to_panels(approved)
-            self.state.set_specification(approved)
+            self.controller.set_specification(approved)
             self._collect_and_validate()
             self.agentic_request_panel.set_result(parsed, self.agentic.status.value, self.agentic.provider_status)
-            self.progress_label.setText("Human approved agent-assisted specification. Feasibility estimate running.")
-            self.controller.estimate()
+            self._refresh_agentic_summary()
+            self._refresh_generation_authorization()
+            self.progress_label.setText("Human approved agent-assisted specification. Use Estimate or Generate Preview explicitly.")
             gui_event("agentic_specification_approved", approval_id=record.approval_id)
         except Exception as exc:
+            self.agentic_state = AgenticWorkflowState.AGENTIC_FAILED
             gui_event("agentic_approval_failed", error=str(exc))
             self.controller.show_error("SPEC_INVALID", "Approved agentic specification is invalid.", repr(exc))
 
@@ -308,10 +562,27 @@ class MainWindow(QMainWindow):
     def _mark_agentic_approval_stale(self) -> None:
         if self._applying_agentic_specification:
             return
-        if self.agentic.last_approval is not None:
+        if self.application_mode == ApplicationMode.AGENTIC_DESIGN and self.agentic.last_approval is not None:
             self.agentic.mark_approval_stale()
+            if self.agentic_revision is not None:
+                self.agentic_revision.approval_status = "stale"
+            self.agentic_execution_authorized = False
+            self.agentic_state = AgenticWorkflowState.AGENTIC_APPROVAL_STALE
             self.agentic_request_panel.set_result(self.agentic.last_result, self.agentic.status.value, self.agentic.provider_status)
+            self._refresh_agentic_summary()
+            self._refresh_generation_authorization()
             self._refresh_provider_summary()
+
+    def _request_agentic_changes(self) -> None:
+        if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
+            return
+        if self.agentic_revision is not None:
+            self.agentic_revision.approval_status = "stale"
+        self.agentic_execution_authorized = False
+        self.agentic_state = AgenticWorkflowState.AGENTIC_APPROVAL_STALE
+        self.progress_label.setText("Approval stale. Review and approve the updated specification.")
+        self._refresh_agentic_summary()
+        self._refresh_generation_authorization()
 
     def log_panel_message(self, level: str, message: str) -> None:
         self.logs_panel.add_log(level, message)
@@ -324,16 +595,27 @@ class MainWindow(QMainWindow):
         gui_event("busy_changed", busy=busy)
         self.progress_bar.setVisible(busy)
         self.generation_panel.set_busy(busy)
+        if not busy:
+            self.generation_panel.set_inputs_enabled(self.application_mode == ApplicationMode.MANUAL_DESIGN)
+            self._refresh_generation_authorization()
         self.progress_label.setText("Background operation running" if busy else "Ready")
 
     def _estimate_changed(self, estimate: dict) -> None:
         final_allowed = estimate.get("status") != "infeasible"
-        self.generation_panel.set_generation_enabled(not self.controller.spec_model.has_invalid_fields, final_allowed)
+        if self.application_mode == ApplicationMode.MANUAL_DESIGN:
+            self.generation_panel.set_generation_enabled(not self.controller.spec_model.has_invalid_fields, final_allowed)
+        else:
+            authorized = self._agentic_generation_authorized()
+            self.generation_panel.set_generation_enabled(authorized, authorized and final_allowed)
 
     def _run_completed(self, payload: dict) -> None:
         gui_event("run_completed_ui", run_id=payload.get("run_id"), profile=payload.get("profile"))
         self.history_panel.refresh(Path("runs"))
         self.progress_label.setText(f"Run {payload.get('run_id')} completed")
+        if self.application_mode == ApplicationMode.MANUAL_DESIGN:
+            self.manual_state = ManualWorkflowState.MANUAL_PREVIEWED if payload.get("profile") == "preview" else ManualWorkflowState.MANUAL_FINAL_GENERATED
+        else:
+            self.agentic_state = AgenticWorkflowState.AGENTIC_PREVIEWED if payload.get("profile") == "preview" else self.agentic_state
         run_dir = Path(payload["run_dir"])
         tuning = run_dir / "tuning_history.csv"
         if tuning.exists():
@@ -448,6 +730,59 @@ class MainWindow(QMainWindow):
 
     def _refresh_provider_summary(self) -> None:
         self.agentic_request_panel.set_provider_summary(self._provider_summary_text())
+
+    def _refresh_agentic_summary(self) -> None:
+        if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
+            return
+        spec = self.agentic_approved_specification or self.agentic_proposed_specification
+        if spec is None:
+            self.agentic_summary.setPlainText(
+                "No approved agentic specification yet.\n\n"
+                "The current agentic workflow interprets requirements and prepares a human-approved specification. "
+                "Automated strategy planning and bounded repair will be added in later phases.\n\n"
+                "Agent Planning: Available in Phase 3B.2"
+            )
+            self.review_approval_button.setEnabled(False)
+            self.request_changes_button.setEnabled(False)
+            self.switch_to_manual_button.setEnabled(False)
+            return
+        revision = self.agentic_revision
+        approval = revision.approval_status if revision else "not_approved"
+        pore = (
+            f"pore diameter {spec.structure.pore_diameter_mm} mm"
+            if spec.structure.pore_diameter_mm is not None
+            else f"unit-cell size {spec.structure.unit_cell_size_mm} mm"
+        )
+        unsupported = []
+        assumptions = []
+        if self.agentic.last_result is not None:
+            unsupported = [item.feature for item in self.agentic.last_result.unsupported_requests]
+            assumptions = [item.rationale for item in self.agentic.last_result.assumptions]
+        text = "\n".join(
+            [
+                f"Approval: {approval}",
+                f"Specification revision: {revision.revision if revision else 'proposal'}",
+                f"Approval timestamp: {revision.approval_timestamp if revision else 'not approved'}",
+                f"Domain: {spec.domain.shape.value}",
+                f"Dimensions: {spec.domain.dimensions_mm} mm",
+                f"Structure family: {spec.structure.family.value}",
+                f"Full structure name: {spec.structure.family.name}",
+                f"Pore definition: {spec.structure.pore_definition.definition_type}, {pore}",
+                f"Target porosity: {spec.targets.porosity_target.target}",
+                f"Porosity tolerance: {spec.targets.porosity_target.tolerance}",
+                f"Connectivity requirements: open pores={spec.constraints.require_open_pores}, single solid={spec.constraints.require_single_solid_component}",
+                f"Resolution: preview={spec.generation.preview_resolution_mm} mm, final={spec.generation.final_resolution_mm} mm",
+                f"Output formats: {[fmt.value for fmt in spec.export.formats]}",
+                f"Unsupported requests: {unsupported or 'none'}",
+                f"Assumptions: {assumptions or 'none'}",
+                "",
+                "Agent Planning: Available in Phase 3B.2",
+            ]
+        )
+        self.agentic_summary.setPlainText(text)
+        self.review_approval_button.setEnabled(self.agentic.last_result is not None)
+        self.request_changes_button.setEnabled(self.agentic_approved_specification is not None)
+        self.switch_to_manual_button.setEnabled(True)
 
     def _provider_diagnostics_text(self) -> str:
         settings = self.provider_settings
