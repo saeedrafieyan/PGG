@@ -43,3 +43,12 @@ strategy plan.
 
 If the approved specification changes, the plan becomes stale and must be
 regenerated or reapproved for the new revision.
+
+## Phase 3B.3 Step Execution
+
+After plan approval, use the step-execution table to run deterministic steps
+manually. Estimate, Preview, Final, Validation, and Report actions update step
+status and append structured observations. Final generation asks for explicit
+confirmation before starting.
+
+Blocked steps show the failed precondition and do not start execution.

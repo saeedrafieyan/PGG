@@ -19,10 +19,11 @@ Agentic Porous-Material Design System
   verification.
 - Phase 3B.1.3: separated Manual Design and Agentic Design workflows.
 - Phase 3B.2: Engineering Strategy Agent and Plan Approval.
+- Phase 3B.3: guarded plan-step execution and observation integration.
 
 ## Current
 
-- Phase 3B.2 completion and review.
+- Phase 3B.3 completion and review.
 
 Scope:
 
@@ -38,6 +39,10 @@ Scope:
 - deterministic strategy planning
 - human plan approval
 - plan observations
+- guarded user-triggered step execution
+- validation gate mapping
+- execution audit files
+- report and run-history execution evidence
 
 Out of scope:
 
@@ -52,9 +57,9 @@ Out of scope:
 
 ## Recommended Next
 
-Phase 3B.3 should add the next bounded agentic capability without relaxing the
-human approval boundary. Recommended scope: richer per-step execution status,
-report export integration from the plan panel, and guarded sensitivity-analysis
-proposal handling. Autonomous repair, STEP generation, FEA, inverse design, and
+Phase 3B.4 should add the next bounded agentic capability without relaxing the
+human approval boundary. Recommended scope: richer report review, improved
+validation-gate visualization, and a carefully scoped sensitivity-analysis
+execution path. Autonomous repair, STEP generation, FEA, inverse design, and
 material optimization should remain out of scope unless explicitly promoted to a
 future phase.

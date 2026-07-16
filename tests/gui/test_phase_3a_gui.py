@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox
 
 from porous_designer.agentic.contracts import FieldReviewDecision, ProviderMode
 from porous_designer.agentic.credentials import CredentialLookupResult
@@ -872,6 +872,110 @@ def test_phase_3b2_provider_enhanced_wording_does_not_add_forbidden_tools(qtbot,
     assert window.strategy_plan is not None
     assert "Generate STEP" not in window.strategy_plan.summary
     assert not any(step.deterministic_tool == "fea" for step in window.strategy_plan.steps)
+
+
+def test_phase_3b3_execution_table_appears_after_plan_approval(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    assert window.strategy_plan_panel.execution_table.rowCount() > 0
+    assert "Estimate resources" in window.strategy_plan_panel.execution_table.item(0, 0).text()
+
+
+def test_phase_3b3_run_estimate_button_updates_step_status(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    monkeypatch.setattr(window.controller, "estimate", lambda: {"status": "feasible", "voxel_count": 100, "estimated_peak_mb": 1.0, "runtime_class": "fast"})
+    window._execute_plan_step("step_1")
+    assert window.plan_step_executions[0].status == "completed"
+    assert window.strategy_plan_observations[-1].tool_name == "estimate_resources"
+    assert "Generate Preview" in window.progress_label.text()
+
+
+def test_phase_3b3_generate_preview_button_starts_user_triggered_step(qtbot, monkeypatch, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    window.strategy_plan.steps[0].execution_status = "completed"
+    calls = {"preview": 0}
+    monkeypatch.setattr(window.controller, "start_preview", lambda **kwargs: calls.__setitem__("preview", calls["preview"] + 1))
+    window._execute_plan_step("step_2")
+    assert calls["preview"] == 1
+    assert window._running_plan_step_id == "step_2"
+
+
+def test_phase_3b3_generate_final_requires_confirmation(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    for step in window.strategy_plan.steps[:4]:
+        step.execution_status = "completed"
+    calls = {"final": 0}
+    monkeypatch.setattr("porous_designer.gui.main_window.QMessageBox.question", lambda *args, **kwargs: QMessageBox.No)
+    monkeypatch.setattr(window.controller, "start_final", lambda *args, **kwargs: calls.__setitem__("final", calls["final"] + 1))
+    window._execute_plan_step("step_5")
+    assert calls["final"] == 0
+    assert window.plan_step_executions[4].status == "cancelled"
+
+
+def test_phase_3b3_failed_precondition_displays_reason(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    window._execute_plan_step("step_2")
+    assert "Complete previous required" in window.progress_label.text()
+    assert window.strategy_plan_observations[-1].status == "blocked"
+
+
+def test_phase_3b3_cancellation_updates_step_status(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    window._running_plan_step_id = "step_2"
+    cancelled = {"called": 0}
+    monkeypatch.setattr(window.controller, "cancel", lambda: cancelled.__setitem__("called", cancelled["called"] + 1))
+    window._cancel_requested()
+    assert cancelled["called"] == 1
+    assert window.strategy_plan_observations[-1].status == "cancelled"
+
+
+def test_phase_3b3_observation_details_panel_populates(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    monkeypatch.setattr(window.controller, "estimate", lambda: {"status": "feasible", "voxel_count": 100, "estimated_peak_mb": 1.0, "runtime_class": "fast"})
+    window._execute_plan_step("step_1")
+    window.strategy_plan_panel._show_step_details(0)
+    assert "Latest observation" in window.strategy_plan_panel.details.toPlainText()
+
+
+def test_phase_3b3_next_action_appears(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp_plan(window, monkeypatch)
+    monkeypatch.setattr(window.controller, "estimate", lambda: {"status": "conditionally_feasible", "message": "high memory"})
+    window._execute_plan_step("step_1")
+    assert "Resource estimate is high" in window.progress_label.text()
+
+
+def test_phase_3b3_manual_design_does_not_show_execution_panel(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.application_mode == ApplicationMode.MANUAL_DESIGN
+    assert window.strategy_plan_box.isHidden()
+
+
+def test_phase_3b3_no_automatic_execution_after_plan_approval(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    approve_agentic_hcp(window, monkeypatch)
+    calls = {"preview": 0, "final": 0}
+    monkeypatch.setattr(window.controller, "start_preview", lambda **kwargs: calls.__setitem__("preview", calls["preview"] + 1))
+    monkeypatch.setattr(window.controller, "start_final", lambda *args, **kwargs: calls.__setitem__("final", calls["final"] + 1))
+    window._generate_strategy_plan()
+    window._approve_strategy_plan()
+    assert calls == {"preview": 0, "final": 0}
 
 
 @pytest.mark.slow

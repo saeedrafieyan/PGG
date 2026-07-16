@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -118,13 +119,79 @@ class PlanObservation(StrictModel):
     run_id: str | None = None
     started_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    status: Literal["completed", "failed", "skipped"] = "completed"
+    status: Literal["completed", "failed", "skipped", "blocked", "cancelled"] = "completed"
     scalar_result_summary: dict[str, Any] = Field(default_factory=dict)
     validation_status: str = "not_measured"
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     artifact_paths: list[str] = Field(default_factory=list)
     next_recommended_action: str = ""
+
+
+class PlanStepResult(StrictModel):
+    step_id: str
+    deterministic_tool: str | None = None
+    status: Literal["completed", "failed", "skipped", "blocked", "cancelled"] = "completed"
+    scalar_result_summary: dict[str, Any] = Field(default_factory=dict)
+    artifact_paths: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class PlanValidationGateResult(StrictModel):
+    gate_id: str
+    check_name: str
+    status: Literal["PASS", "WARNING", "FAIL", "NOT_AVAILABLE", "NOT_REQUESTED"]
+    source: str = "deterministic"
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlanNextActionRecommendation(StrictModel):
+    recommendation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    plan_id: str
+    step_id: str
+    status: str
+    message: str
+    source: Literal["deterministic", "provider_wording"] = "deterministic"
+
+
+class PlanStepExecution(StrictModel):
+    step_id: str
+    deterministic_tool: str | None = None
+    precondition_status: Literal["not_checked", "pass", "blocked"] = "not_checked"
+    user_authorized: bool = False
+    started_at: str | None = None
+    completed_at: str | None = None
+    status: Literal["not_started", "ready", "running", "completed", "failed", "blocked", "skipped", "cancelled", "stale"] = "not_started"
+    run_id: str | None = None
+    output_artifacts: list[str] = Field(default_factory=list)
+    validation_summary: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class PlanExecutionSession(StrictModel):
+    execution_session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    plan_id: str
+    specification_id: str
+    specification_revision: int
+    mode: Literal["agentic_plan_step_execution"] = "agentic_plan_step_execution"
+    started_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    status: Literal["not_started", "ready", "running_step", "waiting_for_user", "completed", "failed", "cancelled", "stale"] = "ready"
+    current_step_id: str = ""
+    completed_steps: list[str] = Field(default_factory=list)
+    failed_steps: list[str] = Field(default_factory=list)
+    skipped_steps: list[str] = Field(default_factory=list)
+    observations: list[PlanObservation] = Field(default_factory=list)
+    user_authorizations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PlanExecutionAudit(StrictModel):
+    execution_session: PlanExecutionSession
+    step_executions: list[PlanStepExecution] = Field(default_factory=list)
+    validation_gates: list[PlanValidationGateResult] = Field(default_factory=list)
+    next_actions: list[PlanNextActionRecommendation] = Field(default_factory=list)
 
 
 class StrategyPlan(StrictModel):
@@ -282,33 +349,265 @@ def write_strategy_audit(
     return target
 
 
+def create_execution_session(plan: StrategyPlan) -> PlanExecutionSession:
+    return PlanExecutionSession(
+        plan_id=plan.plan_id,
+        specification_id=plan.specification_id,
+        specification_revision=plan.specification_revision,
+        completed_steps=[step.step_id for step in plan.steps if step.execution_status == "completed"],
+        skipped_steps=[step.step_id for step in plan.steps if step.execution_status == "skipped"],
+        status="ready" if plan.status == "approved" else "not_started",
+    )
+
+
+def step_executions_from_plan(plan: StrategyPlan) -> list[PlanStepExecution]:
+    return [
+        PlanStepExecution(
+            step_id=step.step_id,
+            deterministic_tool=step.deterministic_tool,
+            status=_execution_status_from_step(step.execution_status),
+        )
+        for step in plan.steps
+    ]
+
+
+def blocked_observation(plan: StrategyPlan, step_id: str, tool_name: str | None, reason: str) -> PlanObservation:
+    return PlanObservation(
+        plan_id=plan.plan_id,
+        step_id=step_id,
+        tool_name=tool_name or "user_checkpoint",
+        status="blocked",
+        validation_status="blocked",
+        errors=[reason],
+        next_recommended_action="Resolve the blocked precondition before running this step.",
+    )
+
+
+def skipped_observation(plan: StrategyPlan, step_id: str, tool_name: str | None, reason: str) -> PlanObservation:
+    return PlanObservation(
+        plan_id=plan.plan_id,
+        step_id=step_id,
+        tool_name=tool_name or "user_checkpoint",
+        status="skipped",
+        validation_status="not_requested",
+        warnings=[reason],
+        next_recommended_action="Continue only if later step preconditions remain satisfied.",
+    )
+
+
+def cancelled_observation(plan: StrategyPlan, step_id: str, tool_name: str | None, reason: str) -> PlanObservation:
+    return PlanObservation(
+        plan_id=plan.plan_id,
+        step_id=step_id,
+        tool_name=tool_name or "unknown",
+        status="cancelled",
+        validation_status="cancelled",
+        warnings=[reason],
+        next_recommended_action="Re-run the step when ready; do not mark it completed.",
+    )
+
+
+def write_plan_execution_audit(
+    session_dir: str | Path,
+    *,
+    execution_session: PlanExecutionSession,
+    step_executions: list[PlanStepExecution],
+    validation_gates: list[PlanValidationGateResult],
+    next_actions: list[PlanNextActionRecommendation],
+) -> Path:
+    target = Path(session_dir) / "agentic"
+    target.mkdir(parents=True, exist_ok=True)
+    observations = execution_session.observations
+    audit = PlanExecutionAudit(
+        execution_session=execution_session,
+        step_executions=step_executions,
+        validation_gates=validation_gates,
+        next_actions=next_actions,
+    )
+    (target / "plan_execution_session.json").write_text(json.dumps(execution_session.model_dump(mode="json"), indent=2), encoding="utf-8")
+    (target / "plan_step_executions.json").write_text(json.dumps([s.model_dump(mode="json") for s in step_executions], indent=2), encoding="utf-8")
+    (target / "plan_observations.json").write_text(json.dumps([o.model_dump(mode="json") for o in observations], indent=2), encoding="utf-8")
+    (target / "plan_validation_gates.json").write_text(json.dumps([g.model_dump(mode="json") for g in validation_gates], indent=2), encoding="utf-8")
+    (target / "plan_next_actions.json").write_text(json.dumps([n.model_dump(mode="json") for n in next_actions], indent=2), encoding="utf-8")
+    (target / "plan_execution_audit.json").write_text(json.dumps(audit.model_dump(mode="json"), indent=2), encoding="utf-8")
+    return target
+
+
 def observation_for_estimate(plan: StrategyPlan, estimate: dict[str, Any]) -> PlanObservation:
     return PlanObservation(
         plan_id=plan.plan_id,
         step_id=_step_for_tool(plan, "estimate_resources"),
         tool_name="estimate_resources",
         status="completed",
-        scalar_result_summary={k: estimate.get(k) for k in ("status", "voxel_count", "memory_gb", "runtime_class") if k in estimate},
+        scalar_result_summary={k: estimate.get(k) for k in ("status", "grid_shape", "voxel_count", "estimated_peak_mb", "available_memory_mb", "memory_fraction", "runtime_class") if k in estimate},
         validation_status=str(estimate.get("status", "unknown")),
         warnings=[str(estimate.get("message"))] if estimate.get("message") else [],
-        next_recommended_action="Review preview generation step." if estimate.get("status") != "infeasible" else "Revise specification before generation.",
+        next_recommended_action=next_action_for_estimate(estimate),
     )
 
 
 def observation_for_run(plan: StrategyPlan, payload: dict[str, Any]) -> PlanObservation:
     profile = payload.get("profile")
     tool = "generate_preview" if profile == "preview" else "generate_final"
+    validation = _read_json_path(payload.get("validation_report_path"))
+    checks = {check.get("name"): check for check in validation.get("checks", []) if isinstance(check, dict)}
+    status = "completed" if payload.get("validation_passed", True) else "failed"
     return PlanObservation(
         plan_id=plan.plan_id,
         step_id=_step_for_tool(plan, tool),
         tool_name=tool,
         run_id=payload.get("run_id"),
-        status="completed",
-        scalar_result_summary={"profile": profile, "triangle_count": payload.get("triangle_count"), "porosity": payload.get("porosity")},
-        validation_status=str(payload.get("validation_status", "not_measured")),
-        artifact_paths=[str(value) for key, value in payload.items() if key.endswith("_path") or key in {"stl_path", "run_dir"}],
-        next_recommended_action="Review preview validation before final generation." if profile == "preview" else "Review final validation and export report.",
+        status=status,
+        scalar_result_summary={
+            "profile": profile,
+            "triangle_count": payload.get("triangle_count"),
+            "final_mesh_porosity": payload.get("final_mesh_porosity"),
+            "watertight": payload.get("watertight"),
+            "solid_components": payload.get("solid_components"),
+            "pore_components": payload.get("connectivity", {}).get("pore_component_count") if isinstance(payload.get("connectivity"), dict) else None,
+            "pore_connected_x": payload.get("connectivity", {}).get("pore_connected_x") if isinstance(payload.get("connectivity"), dict) else None,
+            "pore_connected_y": payload.get("connectivity", {}).get("pore_connected_y") if isinstance(payload.get("connectivity"), dict) else None,
+            "pore_connected_z": payload.get("connectivity", {}).get("pore_connected_z") if isinstance(payload.get("connectivity"), dict) else None,
+            "stl_sha256": payload.get("stl_sha256"),
+            "total_s": payload.get("timing", {}).get("total_s") if isinstance(payload.get("timing"), dict) else None,
+            "peak_memory_mb": payload.get("peak_memory_mb"),
+            "validation_checks": {name: check.get("status") for name, check in checks.items()},
+        },
+        validation_status="pass" if payload.get("validation_passed") else "fail",
+        warnings=list(payload.get("messages", [])) if payload.get("messages") else [],
+        artifact_paths=[str(value) for key, value in payload.items() if value and (key.endswith("_path") or key in {"stl_path", "run_dir"})],
+        next_recommended_action=next_action_for_run(payload, validation),
     )
+
+
+def observation_for_report(plan: StrategyPlan, report_path: str | Path, included_artifacts: list[str] | None = None) -> PlanObservation:
+    path = Path(report_path)
+    return PlanObservation(
+        plan_id=plan.plan_id,
+        step_id=_step_for_tool(plan, "export_html_report"),
+        tool_name="export_html_report",
+        status="completed" if path.exists() else "failed",
+        scalar_result_summary={
+            "report_path": str(path),
+            "report_sha256": file_sha256(path) if path.exists() else "",
+            "included_artifacts": included_artifacts or [],
+        },
+        validation_status="pass" if path.exists() else "fail",
+        artifact_paths=[str(path)] if path.exists() else [],
+        next_recommended_action="Report exported. Archive the run or duplicate the specification for another iteration." if path.exists() else "Report export failed. Review run artifacts and try again.",
+    )
+
+
+def validation_gates_from_estimate(plan: StrategyPlan, estimate: dict[str, Any]) -> list[PlanValidationGateResult]:
+    status = str(estimate.get("status", "unknown"))
+    if status == "feasible":
+        gate_status = "PASS"
+    elif status == "conditionally_feasible":
+        gate_status = "WARNING"
+    elif status == "infeasible":
+        gate_status = "FAIL"
+    else:
+        gate_status = "NOT_AVAILABLE"
+    return [
+        PlanValidationGateResult(
+            gate_id="gate_resources",
+            check_name="resource estimate acceptable",
+            status=gate_status,
+            details=estimate,
+        )
+    ]
+
+
+def validation_gates_from_report(plan: StrategyPlan, validation_report: dict[str, Any], *, profile: str) -> list[PlanValidationGateResult]:
+    prefix = "gate_preview" if profile == "preview" else "gate_final"
+    results = []
+    checks = validation_report.get("checks", [])
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        results.append(
+            PlanValidationGateResult(
+                gate_id=prefix,
+                check_name=str(check.get("name", "")),
+                status=_gate_status(check.get("status")),
+                details={
+                    "requested_value": check.get("requested_value"),
+                    "achieved_value": check.get("achieved_value"),
+                    "tolerance": check.get("tolerance"),
+                    "method": check.get("method"),
+                    "message": check.get("message"),
+                },
+            )
+        )
+    if not results:
+        results.append(PlanValidationGateResult(gate_id=prefix, check_name="validation report", status="NOT_AVAILABLE"))
+    if any("STEP" in note.feature or "STP" in note.feature for note in plan.unsupported_requirements):
+        results.append(PlanValidationGateResult(gate_id="gate_unsupported", check_name="unsupported STEP acknowledged", status="PASS"))
+    if any("wall" in note.feature.lower() for note in plan.unsupported_requirements):
+        results.append(PlanValidationGateResult(gate_id="gate_unsupported", check_name="wall thickness not available", status="NOT_AVAILABLE"))
+    if any("throat" in note.feature.lower() for note in plan.unsupported_requirements):
+        results.append(PlanValidationGateResult(gate_id="gate_unsupported", check_name="throat size not available", status="NOT_AVAILABLE"))
+    return results
+
+
+def next_action_for_estimate(estimate: dict[str, Any]) -> str:
+    status = estimate.get("status")
+    if status == "feasible":
+        return "Resources are acceptable. Generate Preview is the recommended next step."
+    if status == "conditionally_feasible":
+        return "Resource estimate is high. Review memory estimate before preview or final generation."
+    if status == "infeasible":
+        return "Resource estimate is infeasible. Revise dimensions or resolution before generation."
+    return "Review the resource estimate before continuing."
+
+
+def next_action_for_run(payload: dict[str, Any], validation_report: dict[str, Any] | None = None) -> str:
+    profile = payload.get("profile")
+    validation_report = validation_report or {}
+    failed = [check for check in validation_report.get("checks", []) if isinstance(check, dict) and str(check.get("status")).lower() == "fail"]
+    warnings = [check for check in validation_report.get("checks", []) if isinstance(check, dict) and str(check.get("status")).lower() == "warning"]
+    if profile == "preview":
+        if failed or warnings:
+            return "Preview completed with validation warnings. Review geometry and validation summary before final generation."
+        return "Preview completed. Review geometry and validation summary before final generation."
+    if failed:
+        return "Final validation failed. Do not use this STL as an accepted output. Review validation errors; bounded repair will be available in a later phase."
+    return "Final validation passed. Export the HTML report."
+
+
+def recommendation_from_observation(observation: PlanObservation) -> PlanNextActionRecommendation:
+    return PlanNextActionRecommendation(
+        plan_id=observation.plan_id,
+        step_id=observation.step_id,
+        status=observation.status,
+        message=observation.next_recommended_action,
+    )
+
+
+def file_sha256(path: str | Path) -> str:
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        return ""
+    digest = hashlib.sha256()
+    with p.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def apply_provider_next_action_wording(base: PlanNextActionRecommendation, provider_payload: dict[str, Any]) -> PlanNextActionRecommendation:
+    raw = json.dumps(provider_payload, default=str).lower()
+    if any(token in raw for token in FORBIDDEN_TOOL_TOKENS):
+        return base
+    if str(provider_payload.get("status", base.status)) != base.status:
+        return base
+    message = provider_payload.get("message") or provider_payload.get("next_action")
+    if not message:
+        return base
+    updated = base.model_copy(deep=True)
+    updated.message = str(message)[:600]
+    updated.source = "provider_wording"
+    return updated
 
 
 def _step(step_id: str, title: str, purpose: str, tool: str | None, inputs: list[str], outputs: list[str], preconditions: list[str], success: list[str], failure: str, approval: bool, status: str = "not_started") -> StrategyStep:
@@ -336,3 +635,39 @@ def _step_for_tool(plan: StrategyPlan, tool_name: str) -> str:
         if step.deterministic_tool == tool_name:
             return step.step_id
     return "unknown_step"
+
+
+def _execution_status_from_step(status: str) -> str:
+    return {
+        "not_started": "not_started",
+        "ready": "ready",
+        "running": "running",
+        "completed": "completed",
+        "failed": "failed",
+        "skipped": "skipped",
+    }.get(status, "not_started")
+
+
+def _gate_status(value: Any) -> str:
+    text = str(value or "").lower()
+    if text == "pass":
+        return "PASS"
+    if text == "warning":
+        return "WARNING"
+    if text == "fail":
+        return "FAIL"
+    if text == "not_measured":
+        return "NOT_AVAILABLE"
+    return "NOT_AVAILABLE"
+
+
+def _read_json_path(path: Any) -> dict[str, Any]:
+    if not path:
+        return {}
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}

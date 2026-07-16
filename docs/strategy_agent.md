@@ -6,6 +6,10 @@ The strategy agent creates a reviewable plan from a human-approved
 `DesignSpecification`. It does not generate geometry, repair models, run FEA,
 create STEP files, optimize materials, or execute a chain of tools.
 
+Phase 3B.3 adds guarded execution of individual approved plan steps. The plan
+still does not execute itself; the local user must press a step action button
+for each deterministic tool.
+
 ## Inputs
 
 - Approved `DesignSpecification`

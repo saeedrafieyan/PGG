@@ -79,6 +79,11 @@ deterministic tools, validation gates, unsupported-request notes, risks, and
 user checkpoints. Agentic Preview and Final require an approved non-stale plan,
 but every execution step still requires an explicit user click.
 
+Phase 3B.3 connects approved strategy-plan steps to guarded deterministic
+execution. Users can run plan steps one at a time, see precondition results,
+step status, structured observations, validation gates, and next-action
+recommendations. This is still not autonomous multi-step execution.
+
 ## Spec File Format
 
 The modern backend uses structured YAML matching `DesignSpecification`.
@@ -116,9 +121,9 @@ output:       sample
   geometry or validation metrics.
 - Renderer and OpenGL details are available from the GUI `Diagnostics` action;
   the normal preview panel shows only a compact preview/final status row.
-- FEA, inverse design, cloud deployment, autonomous generation, bounded repair,
-  STEP generation, and arbitrary CAD code generation are not part of Phase
-  3B.2.
+- FEA, inverse design, cloud deployment, autonomous multi-step execution,
+  bounded repair, STEP generation, material optimization, and arbitrary CAD code
+  generation are not part of Phase 3B.3.
 
 ## Example
 

@@ -26,3 +26,12 @@ runs/<session>/agentic/strategy_plan_observations.json
 
 Observation records do not store secrets, hidden reasoning, meshes, voxel
 arrays, or full geometry payloads.
+
+Phase 3B.3 also writes execution observations to:
+
+```text
+runs/<session>/agentic/plan_observations.json
+```
+
+Run-specific reports can include those observations when execution audit files
+are copied into `runs/<run_id>/agentic/`.

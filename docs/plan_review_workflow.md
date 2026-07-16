@@ -20,3 +20,8 @@ plan approval in Agentic Design mode.
 
 If the approved specification changes, the current plan becomes stale and no
 longer authorizes execution.
+
+Phase 3B.3 adds a step-execution table after plan approval. Each row shows the
+step, deterministic tool, precondition status, execution status, latest result,
+and an action button. Failed preconditions record blocked observations and do
+not start deterministic workers.

@@ -67,3 +67,13 @@ material optimization, arbitrary code, or unrestricted tool use.
 Plan approval is separate from specification approval. Agentic Preview and Final
 require both an approved non-stale specification and an approved non-stale
 strategy plan. Manual Design mode does not use this gate.
+
+## Phase 3B.3 Guarded Execution
+
+Approved plans now create `PlanExecutionSession` records. The Agentic Plan panel
+can execute approved steps one at a time through existing deterministic GUI
+controller actions and backend services. Preconditions are checked before every
+step, observations are structured, and validation gates are mapped from backend
+validation reports.
+
+No autonomous plan runner exists in Phase 3B.3.

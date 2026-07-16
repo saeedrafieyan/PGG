@@ -143,3 +143,8 @@ any multi-step chain automatically.
 
 `Reject Plan` leaves Agentic Preview and Final disabled. If the approved
 specification changes, the existing plan becomes stale and must be regenerated.
+
+After plan approval, the Step Execution table shows runnable deterministic
+steps. Use the action button on each row to run that step. The details panel
+shows preconditions, warnings, artifacts, scalar summaries, validation results,
+and the deterministic next recommended action.

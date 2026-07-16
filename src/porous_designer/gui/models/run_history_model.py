@@ -24,6 +24,10 @@ class RunRecord:
     status: str
     runtime_s: float | None
     output_folder: str
+    mode: str = ""
+    plan_id: str = ""
+    step_status_summary: str = ""
+    report_available: bool = False
 
 
 class RunHistoryStore:
@@ -50,10 +54,23 @@ class RunHistoryStore:
                     profile text,
                     status text,
                     runtime_s real,
-                    output_folder text
+                    output_folder text,
+                    mode text default '',
+                    plan_id text default '',
+                    step_status_summary text default '',
+                    report_available integer default 0
                 )
                 """
             )
+            columns = {row[1] for row in db.execute("pragma table_info(runs)").fetchall()}
+            for name, ddl in {
+                "mode": "alter table runs add column mode text default ''",
+                "plan_id": "alter table runs add column plan_id text default ''",
+                "step_status_summary": "alter table runs add column step_status_summary text default ''",
+                "report_available": "alter table runs add column report_available integer default 0",
+            }.items():
+                if name not in columns:
+                    db.execute(ddl)
 
     def upsert_from_run_dir(self, run_dir: Path) -> RunRecord | None:
         bb_path = run_dir / "blackboard.json"
@@ -68,6 +85,24 @@ class RunHistoryStore:
         timing_path = run_dir / "timing.json"
         if timing_path.exists():
             timing = json.loads(timing_path.read_text(encoding="utf-8"))
+        workflow = {}
+        workflow_path = run_dir / "workflow_metadata.json"
+        if workflow_path.exists():
+            workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        plan_session = {}
+        plan_session_path = run_dir / "agentic" / "plan_execution_session.json"
+        if plan_session_path.exists():
+            plan_session = json.loads(plan_session_path.read_text(encoding="utf-8"))
+        mode = workflow.get("application_mode", "")
+        if mode == "agentic_design" and workflow.get("strategy_plan_id"):
+            mode = "agentic_plan_step_execution"
+        step_summary = ""
+        if plan_session:
+            step_summary = (
+                f"completed={len(plan_session.get('completed_steps', []))}; "
+                f"failed={len(plan_session.get('failed_steps', []))}; "
+                f"skipped={len(plan_session.get('skipped_steps', []))}"
+            )
         record = RunRecord(
             run_id=bb.get("run_id", run_dir.name),
             timestamp=bb.get("updated_at") or bb.get("created_at", ""),
@@ -80,11 +115,15 @@ class RunHistoryStore:
             status=bb.get("status", ""),
             runtime_s=timing.get("total_s"),
             output_folder=str(run_dir),
+            mode=mode,
+            plan_id=workflow.get("strategy_plan_id", plan_session.get("plan_id", "")),
+            step_status_summary=step_summary,
+            report_available=(run_dir / "pgg_report.html").exists(),
         )
         with self._connect() as db:
             db.execute(
                 """
-                insert into runs values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                insert into runs values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(run_id) do update set
                     timestamp=excluded.timestamp,
                     family=excluded.family,
@@ -95,7 +134,11 @@ class RunHistoryStore:
                     profile=excluded.profile,
                     status=excluded.status,
                     runtime_s=excluded.runtime_s,
-                    output_folder=excluded.output_folder
+                    output_folder=excluded.output_folder,
+                    mode=excluded.mode,
+                    plan_id=excluded.plan_id,
+                    step_status_summary=excluded.step_status_summary,
+                    report_available=excluded.report_available
                 """,
                 tuple(record.__dict__.values()),
             )
@@ -118,7 +161,7 @@ class RunHistoryStore:
 
 
 class RunHistoryModel(QAbstractTableModel):
-    HEADERS = ["Run ID", "Timestamp", "Family", "Domain", "Dimensions", "Requested", "Achieved", "Profile", "Status", "Runtime", "Folder"]
+    HEADERS = ["Run ID", "Timestamp", "Family", "Domain", "Dimensions", "Requested", "Achieved", "Profile", "Status", "Runtime", "Folder", "Mode", "Plan ID", "Steps", "Report"]
 
     def __init__(self, records: Iterable[RunRecord] = (), parent=None) -> None:
         super().__init__(parent)

@@ -36,14 +36,28 @@ from porous_designer.agentic.provider_errors import redact_secrets
 from porous_designer.agentic.provider_factory import provider_from_settings
 from porous_designer.agentic.strategy import (
     PlanApprovalRecord,
+    PlanExecutionSession,
     PlanObservation,
+    PlanNextActionRecommendation,
+    PlanStepExecution,
+    PlanValidationGateResult,
     StrategyPlan,
     apply_provider_strategy_wording,
     approve_strategy_plan,
+    blocked_observation,
+    cancelled_observation,
+    create_execution_session,
     deterministic_strategy_plan,
     mark_plan_stale,
     observation_for_estimate,
+    observation_for_report,
     observation_for_run,
+    recommendation_from_observation,
+    skipped_observation,
+    step_executions_from_plan,
+    validation_gates_from_estimate,
+    validation_gates_from_report,
+    write_plan_execution_audit,
     write_strategy_audit,
 )
 from porous_designer.gui.application_controller import ApplicationController
@@ -109,6 +123,11 @@ class MainWindow(QMainWindow):
         self.strategy_plan: StrategyPlan | None = None
         self.strategy_plan_approval: PlanApprovalRecord | None = None
         self.strategy_plan_observations: list[PlanObservation] = []
+        self.plan_execution_session: PlanExecutionSession | None = None
+        self.plan_step_executions: list[PlanStepExecution] = []
+        self.plan_validation_gates: list[PlanValidationGateResult] = []
+        self.plan_next_actions: list[PlanNextActionRecommendation] = []
+        self._running_plan_step_id: str | None = None
         self._last_provider_test = "Not tested"
         self._last_provider_decision = "none"
         self._last_provider_execution = "none"
@@ -269,13 +288,15 @@ class MainWindow(QMainWindow):
         self.strategy_plan_panel.approve_requested.connect(self._approve_strategy_plan)
         self.strategy_plan_panel.reject_requested.connect(self._reject_strategy_plan)
         self.strategy_plan_panel.export_requested.connect(self._export_strategy_plan_json)
+        self.strategy_plan_panel.execute_step_requested.connect(self._execute_plan_step)
+        self.strategy_plan_panel.skip_step_requested.connect(self._skip_plan_step)
         self.request_panel.load_requested.connect(lambda: self.controller.load_specification(self))
         self.request_panel.save_requested.connect(lambda: self.controller.save_specification(self))
         self.request_panel.report_requested.connect(lambda: self.controller.export_report(self))
         self.generation_panel.estimate_requested.connect(self._estimate_requested)
         self.generation_panel.preview_requested.connect(self._preview_requested)
         self.generation_panel.final_requested.connect(self._final_requested)
-        self.generation_panel.cancel_requested.connect(self.controller.cancel)
+        self.generation_panel.cancel_requested.connect(self._cancel_requested)
         self.controller.estimate_changed.connect(self.feasibility_panel.set_estimate)
         self.controller.estimate_changed.connect(self._estimate_changed)
         self.controller.validation_changed.connect(self.validation_panel.set_report)
@@ -353,6 +374,7 @@ class MainWindow(QMainWindow):
         previous = self.agentic_revision.revision if self.agentic_revision else None
         self.manual_revision = new_manual_revision(copied, origin="derived_from_agentic_specification", superseded_revision=previous)
         self.agentic_execution_authorized = False
+        self._reset_plan_execution_state()
         self.controller.set_specification(copied)
         self._apply_specification_to_panels(copied)
         self._apply_application_mode(ApplicationMode.MANUAL_DESIGN)
@@ -380,6 +402,7 @@ class MainWindow(QMainWindow):
         self.strategy_plan = None
         self.strategy_plan_approval = None
         self.strategy_plan_observations = []
+        self._reset_plan_execution_state()
         self.agentic_state = AgenticWorkflowState.AGENTIC_REQUEST_EMPTY
         self._apply_application_mode(ApplicationMode.AGENTIC_DESIGN)
 
@@ -491,6 +514,7 @@ class MainWindow(QMainWindow):
         self.strategy_plan = plan
         self.strategy_plan_approval = None
         self.strategy_plan_observations = []
+        self._reset_plan_execution_state()
         self.agentic_execution_authorized = False
         write_strategy_audit(self.agentic.audit_dir, plan=plan, observations=self.strategy_plan_observations, provider_metadata=provider_metadata)
         self._refresh_strategy_plan_panel()
@@ -508,7 +532,12 @@ class MainWindow(QMainWindow):
             return
         self.strategy_plan, self.strategy_plan_approval = approve_strategy_plan(self.strategy_plan, decision="approved")
         self.agentic_execution_authorized = True
+        self.plan_execution_session = create_execution_session(self.strategy_plan)
+        self.plan_step_executions = step_executions_from_plan(self.strategy_plan)
+        self.plan_validation_gates = []
+        self.plan_next_actions = []
         write_strategy_audit(self.agentic.audit_dir, plan=self.strategy_plan, approval=self.strategy_plan_approval, observations=self.strategy_plan_observations)
+        self._write_plan_execution_audit()
         self._refresh_strategy_plan_panel()
         self._refresh_generation_authorization()
         self.progress_label.setText("Strategy plan approved. Use explicit Estimate, Preview, or Final buttons to execute deterministic steps.")
@@ -518,6 +547,7 @@ class MainWindow(QMainWindow):
             return
         self.strategy_plan, self.strategy_plan_approval = approve_strategy_plan(self.strategy_plan, decision="rejected")
         self.agentic_execution_authorized = False
+        self._reset_plan_execution_state()
         write_strategy_audit(self.agentic.audit_dir, plan=self.strategy_plan, approval=self.strategy_plan_approval, observations=self.strategy_plan_observations)
         self._refresh_strategy_plan_panel()
         self._refresh_generation_authorization()
@@ -530,6 +560,138 @@ class MainWindow(QMainWindow):
         if path:
             Path(path).write_text(json.dumps(self.strategy_plan.model_dump(mode="json"), indent=2), encoding="utf-8")
             self.progress_label.setText(f"Strategy plan exported: {path}")
+
+    def _execute_plan_step(self, step_id: str) -> None:
+        step = self._strategy_step(step_id)
+        if step is None:
+            self.progress_label.setText("Selected step is not part of the approved strategy plan.")
+            return
+        ok, reason = self._plan_step_preconditions(step_id)
+        execution = self._execution_for_step(step_id)
+        if not ok:
+            if execution:
+                execution.precondition_status = "blocked"
+                execution.status = "blocked"
+                execution.errors.append(reason)
+            self._record_plan_observation(blocked_observation(self.strategy_plan, step_id, step.deterministic_tool, reason) if self.strategy_plan else None)
+            self.progress_label.setText(reason)
+            return
+        if execution:
+            execution.precondition_status = "pass"
+            execution.user_authorized = True
+            execution.started_at = self._now()
+            execution.status = "running"
+        if self.plan_execution_session:
+            self.plan_execution_session.status = "running_step"
+            self.plan_execution_session.current_step_id = step_id
+            self.plan_execution_session.user_authorizations.append({"step_id": step_id, "tool": step.deterministic_tool, "authorized_at": self._now()})
+        self._write_plan_execution_audit()
+        tool = step.deterministic_tool
+        if tool == "estimate_resources":
+            estimate = self.controller.estimate()
+            if estimate:
+                self._complete_plan_step(step_id, observation_for_estimate(self.strategy_plan, estimate), validation_gates_from_estimate(self.strategy_plan, estimate))
+            else:
+                self._fail_plan_step(step_id, "Estimate failed.")
+        elif tool == "generate_preview":
+            self._running_plan_step_id = step_id
+            self.controller.start_preview(run_metadata=self._run_metadata(user_action="plan_step_generate_preview"))
+        elif tool == "validate_preview":
+            self._validate_existing_run_step(step_id, profile="preview")
+        elif tool == "generate_final":
+            if QMessageBox.question(
+                self,
+                "Generate Final",
+                "This will generate the final validated STL for the approved plan.\nIt may take significant time and memory.\nContinue?",
+            ) != QMessageBox.Yes:
+                self._fail_plan_step(step_id, "Final generation was not authorized by the user.", status="cancelled")
+                return
+            self._running_plan_step_id = step_id
+            self.controller.start_final(self, run_metadata=self._run_metadata(user_action="plan_step_generate_final"))
+        elif tool == "validate_final":
+            self._validate_existing_run_step(step_id, profile="final")
+        elif tool == "export_html_report":
+            report = self._export_plan_execution_report()
+            if report:
+                self._complete_plan_step(step_id, observation_for_report(self.strategy_plan, report, self._current_artifacts()))
+            else:
+                self._fail_plan_step(step_id, "Report export failed or no run is available.")
+        elif tool == "run_sensitivity_analysis":
+            if QMessageBox.question(
+                self,
+                "Run Sensitivity Analysis",
+                "Sensitivity analysis may take longer than preview generation.\nContinue?",
+            ) != QMessageBox.Yes:
+                self._fail_plan_step(step_id, "Sensitivity analysis was not authorized by the user.", status="cancelled")
+                return
+            self._fail_plan_step(step_id, "Sensitivity analysis execution is not wired into the Phase 3B.3 GUI yet.")
+        else:
+            self._fail_plan_step(step_id, "This plan step has no executable deterministic tool.", status="blocked")
+
+    def _skip_plan_step(self, step_id: str) -> None:
+        step = self._strategy_step(step_id)
+        if step is None or self.strategy_plan is None:
+            return
+        if step.deterministic_tool != "run_sensitivity_analysis":
+            self._record_plan_observation(blocked_observation(self.strategy_plan, step_id, step.deterministic_tool, "Required steps cannot be skipped."))
+            self.progress_label.setText("Required steps cannot be skipped.")
+            return
+        if QMessageBox.question(self, "Skip Optional Step", "Skip this optional sensitivity-analysis step?") != QMessageBox.Yes:
+            return
+        observation = skipped_observation(self.strategy_plan, step_id, step.deterministic_tool, "User explicitly skipped optional sensitivity analysis.")
+        self._complete_plan_step(step_id, observation, status="skipped")
+
+    def _plan_step_preconditions(self, step_id: str) -> tuple[bool, str]:
+        if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
+            return False, "Switch to Agentic Design before executing plan steps."
+        if self.agentic_approved_specification is None or self.agentic_revision is None:
+            return False, "Approve a specification before executing plan steps."
+        if self.agentic_revision.approval_status != "approved":
+            return False, "Specification approval is stale. Reapprove the specification first."
+        if self.strategy_plan is None or self.strategy_plan.status != "approved":
+            return False, "Approve a non-stale strategy plan before executing plan steps."
+        if self.strategy_plan.specification_id != self.agentic_revision.specification_id or self.strategy_plan.specification_revision != self.agentic_revision.revision:
+            return False, "Strategy plan is stale for the current specification revision."
+        if self.controller.worker and self.controller.worker.is_running:
+            return False, "A deterministic worker is already running."
+        step = self._strategy_step(step_id)
+        if step is None:
+            return False, "Selected step does not belong to the approved plan."
+        prior = self._required_prior_steps(step_id)
+        missing = [item.step_id for item in prior if item.deterministic_tool and item.execution_status not in {"completed", "skipped"}]
+        if missing:
+            return False, f"Complete previous required step(s) first: {', '.join(missing)}."
+        if step.deterministic_tool in {"validate_preview", "validate_final", "export_html_report"} and not self.controller.last_run_dir:
+            return False, "Required run artifacts are not available yet."
+        if step.deterministic_tool == "validate_preview" and not self._last_run_has_profile("preview"):
+            return False, "Preview validation requires a completed preview run."
+        if step.deterministic_tool == "validate_final" and not self._last_run_has_profile("final"):
+            return False, "Final validation requires a completed final run."
+        return True, "Preconditions passed."
+
+    def _validate_existing_run_step(self, step_id: str, *, profile: str) -> None:
+        if not self.controller.last_run_dir:
+            self._fail_plan_step(step_id, "No run directory is available.", status="blocked")
+            return
+        report_path = self.controller.last_run_dir / "validation_report.json"
+        if not report_path.exists():
+            self._fail_plan_step(step_id, "Validation report is missing.", status="blocked")
+            return
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        gates = validation_gates_from_report(self.strategy_plan, report, profile=profile)
+        failed = any(gate.status == "FAIL" for gate in gates)
+        observation = PlanObservation(
+            plan_id=self.strategy_plan.plan_id,
+            step_id=step_id,
+            tool_name=f"validate_{profile}",
+            run_id=self.controller.last_run_dir.name,
+            status="failed" if failed else "completed",
+            scalar_result_summary={"aggregate_status": report.get("aggregate_status"), "failed_checks": [gate.check_name for gate in gates if gate.status == "FAIL"]},
+            validation_status="fail" if failed else "pass",
+            artifact_paths=[str(report_path)],
+            next_recommended_action="Final validation failed. Do not use this STL as an accepted output. Review validation errors; bounded repair will be available in a later phase." if failed and profile == "final" else ("Final validation passed. Export the HTML report." if profile == "final" else "Preview validation reviewed. Generate Final only if the preview is acceptable."),
+        )
+        self._complete_plan_step(step_id, observation, gates, status="failed" if failed else "completed")
 
     def _parse_agentic_request(self, request: str) -> None:
         if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
@@ -716,6 +878,14 @@ class MainWindow(QMainWindow):
         self._refresh_strategy_plan_panel()
         self._refresh_generation_authorization()
 
+    def _cancel_requested(self) -> None:
+        if self.application_mode == ApplicationMode.AGENTIC_DESIGN and self._running_plan_step_id and self.strategy_plan:
+            step = self._strategy_step(self._running_plan_step_id)
+            observation = cancelled_observation(self.strategy_plan, self._running_plan_step_id, step.deterministic_tool if step else None, "User cancelled the running deterministic worker.")
+            self._complete_plan_step(self._running_plan_step_id, observation, status="cancelled")
+            self._running_plan_step_id = None
+        self.controller.cancel()
+
     def log_panel_message(self, level: str, message: str) -> None:
         self.logs_panel.add_log(level, message)
 
@@ -748,7 +918,17 @@ class MainWindow(QMainWindow):
             self.manual_state = ManualWorkflowState.MANUAL_PREVIEWED if payload.get("profile") == "preview" else ManualWorkflowState.MANUAL_FINAL_GENERATED
         else:
             self.agentic_state = AgenticWorkflowState.AGENTIC_PREVIEWED if payload.get("profile") == "preview" else self.agentic_state
-            self._record_plan_observation(observation_for_run(self.strategy_plan, payload) if self.strategy_plan else None)
+            if self._running_plan_step_id and self.strategy_plan:
+                observation = observation_for_run(self.strategy_plan, payload)
+                gates = validation_gates_from_report(
+                    self.strategy_plan,
+                    json.loads(Path(payload.get("validation_report_path", "")).read_text(encoding="utf-8")) if Path(payload.get("validation_report_path", "")).exists() else {},
+                    profile=payload.get("profile", ""),
+                )
+                self._complete_plan_step(self._running_plan_step_id, observation, gates, status=observation.status)
+                self._running_plan_step_id = None
+            else:
+                self._record_plan_observation(observation_for_run(self.strategy_plan, payload) if self.strategy_plan else None)
         run_dir = Path(payload["run_dir"])
         tuning = run_dir / "tuning_history.csv"
         if tuning.exists():
@@ -922,6 +1102,12 @@ class MainWindow(QMainWindow):
         self.strategy_plan_box.setVisible(available)
         self.strategy_plan_panel.set_specification_available(available)
         self.strategy_plan_panel.set_plan(self.strategy_plan if available else None)
+        self.strategy_plan_panel.set_execution_state(
+            self.strategy_plan if available else None,
+            self.plan_execution_session,
+            self.plan_step_executions,
+            self.strategy_plan_observations,
+        )
 
     def _record_plan_observation(self, observation: PlanObservation | None) -> None:
         if observation is None or self.strategy_plan is None:
@@ -929,14 +1115,147 @@ class MainWindow(QMainWindow):
         self.strategy_plan_observations.append(observation)
         for step in self.strategy_plan.steps:
             if step.step_id == observation.step_id:
-                step.execution_status = observation.status
+                step.execution_status = "failed" if observation.status in {"blocked", "cancelled"} else observation.status
+        if self.plan_execution_session:
+            self.plan_execution_session.observations = list(self.strategy_plan_observations)
+            self.plan_execution_session.updated_at = self._now()
         write_strategy_audit(
             self.agentic.audit_dir,
             plan=self.strategy_plan,
             approval=self.strategy_plan_approval,
             observations=self.strategy_plan_observations,
         )
+        self._write_plan_execution_audit()
         self._refresh_strategy_plan_panel()
+
+    def _complete_plan_step(
+        self,
+        step_id: str,
+        observation: PlanObservation,
+        gates: list[PlanValidationGateResult] | None = None,
+        *,
+        status: str | None = None,
+    ) -> None:
+        status = status or observation.status
+        execution = self._execution_for_step(step_id)
+        if execution:
+            execution.completed_at = self._now()
+            execution.status = status
+            execution.run_id = observation.run_id
+            execution.output_artifacts = list(observation.artifact_paths)
+            execution.validation_summary = dict(observation.scalar_result_summary)
+            execution.warnings = list(observation.warnings)
+            execution.errors = list(observation.errors)
+        if self.plan_execution_session:
+            self.plan_execution_session.current_step_id = ""
+            self.plan_execution_session.status = "waiting_for_user" if status in {"completed", "skipped"} else ("cancelled" if status == "cancelled" else "failed")
+            target = self.plan_execution_session.completed_steps
+            if status == "failed":
+                target = self.plan_execution_session.failed_steps
+            elif status == "skipped":
+                target = self.plan_execution_session.skipped_steps
+            elif status == "cancelled":
+                target = self.plan_execution_session.failed_steps
+            if step_id not in target:
+                target.append(step_id)
+        if gates:
+            self.plan_validation_gates.extend(gates)
+        self.plan_next_actions.append(recommendation_from_observation(observation))
+        self._record_plan_observation(observation)
+        self.progress_label.setText(observation.next_recommended_action)
+
+    def _fail_plan_step(self, step_id: str, reason: str, *, status: str = "failed") -> None:
+        if not self.strategy_plan:
+            return
+        step = self._strategy_step(step_id)
+        if status == "cancelled":
+            observation = cancelled_observation(self.strategy_plan, step_id, step.deterministic_tool if step else None, reason)
+        elif status == "blocked":
+            observation = blocked_observation(self.strategy_plan, step_id, step.deterministic_tool if step else None, reason)
+        else:
+            observation = PlanObservation(
+                plan_id=self.strategy_plan.plan_id,
+                step_id=step_id,
+                tool_name=step.deterministic_tool if step and step.deterministic_tool else "unknown",
+                status="failed",
+                validation_status="fail",
+                errors=[reason],
+                next_recommended_action="Review the error and retry after correcting the issue.",
+            )
+        self._complete_plan_step(step_id, observation, status=observation.status)
+
+    def _reset_plan_execution_state(self) -> None:
+        self.plan_execution_session = None
+        self.plan_step_executions = []
+        self.plan_validation_gates = []
+        self.plan_next_actions = []
+        self._running_plan_step_id = None
+
+    def _write_plan_execution_audit(self, target_dir: Path | None = None) -> None:
+        if not self.plan_execution_session:
+            return
+        for target in [self.agentic.audit_dir, target_dir]:
+            if target:
+                write_plan_execution_audit(
+                    target,
+                    execution_session=self.plan_execution_session,
+                    step_executions=self.plan_step_executions,
+                    validation_gates=self.plan_validation_gates,
+                    next_actions=self.plan_next_actions,
+                )
+
+    def _export_plan_execution_report(self) -> Path | None:
+        if not self.controller.last_run_dir:
+            return None
+        self._write_plan_execution_audit(self.controller.last_run_dir)
+        return self.controller.export_report(self)
+
+    def _strategy_step(self, step_id: str):
+        if not self.strategy_plan:
+            return None
+        return next((step for step in self.strategy_plan.steps if step.step_id == step_id), None)
+
+    def _execution_for_step(self, step_id: str) -> PlanStepExecution | None:
+        for item in self.plan_step_executions:
+            if item.step_id == step_id:
+                return item
+        if self.strategy_plan and self._strategy_step(step_id):
+            step = self._strategy_step(step_id)
+            item = PlanStepExecution(step_id=step_id, deterministic_tool=step.deterministic_tool, status="ready")
+            self.plan_step_executions.append(item)
+            return item
+        return None
+
+    def _required_prior_steps(self, step_id: str):
+        if not self.strategy_plan:
+            return []
+        prior = []
+        for step in self.strategy_plan.steps:
+            if step.step_id == step_id:
+                break
+            if step.deterministic_tool not in {None, "run_sensitivity_analysis"}:
+                prior.append(step)
+        return prior
+
+    def _last_run_has_profile(self, profile: str) -> bool:
+        if not self.controller.last_run_dir:
+            return False
+        bb = self.controller.last_run_dir / "blackboard.json"
+        if not bb.exists():
+            return False
+        data = json.loads(bb.read_text(encoding="utf-8"))
+        is_final = bool(data.get("artifacts", {}).get("master_stl"))
+        return profile == "final" if is_final else profile == "preview"
+
+    def _current_artifacts(self) -> list[str]:
+        if not self.controller.last_run_dir:
+            return []
+        return [str(path) for path in self.controller.last_run_dir.iterdir() if path.is_file() and path.name in {"blackboard.json", "validation_report.json", "approved_specification.yaml", "checksums.json"}]
+
+    def _now(self) -> str:
+        from datetime import datetime, timezone
+
+        return datetime.now(timezone.utc).isoformat()
 
     def _provider_diagnostics_text(self) -> str:
         settings = self.provider_settings
