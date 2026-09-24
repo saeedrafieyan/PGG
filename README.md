@@ -1,4 +1,6 @@
-# PGG - Porous Geometry Generation
+# AGE - Agentic Geometry Engineering
+
+(formerly PGG - Porous Geometry Generation; the Python package is still `porous_designer`)
 
 **PGG, Porous Geometry Generation** is evolving toward an **Agentic
 Porous-Material Design System**. It generates deterministic porous-geometry STL
@@ -59,9 +61,19 @@ to the active specification.
 External agent access is disabled by default. Deterministic-only parsing works
 without network credentials.
 
-Phase 3B.1.2 adds provider activation controls for optional OpenAI and Gemini
-structured request interpretation. No external LLM is required to use PGG, and
-external access must be explicitly enabled in the GUI provider settings.
+Phase 4.0 replaces the OpenAI/Gemini providers with a single OpenRouter
+provider (free models by default) and evidence-grounded extraction: the model
+must quote the request for every value, and code verifies each quote, number,
+and unit before anything is proposed. See `docs/phase_4_0_report.md`. No
+external LLM is required, and external access must be explicitly enabled in the
+GUI provider settings. Store the key once with:
+
+```
+porous-designer credentials set
+```
+
+Run the live faithfulness benchmark (12 cases, uses free-tier requests) with
+`porous-designer evaluate-agent-provider --provider openrouter`.
 
 Provider settings persist across dialog reopen and application restart. Raw API
 keys are never stored in QSettings and are never repopulated into the password

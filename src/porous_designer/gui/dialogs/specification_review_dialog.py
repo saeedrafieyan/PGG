@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from porous_designer.agentic.contracts import FieldReviewDecision, ParsedRequestResult
+from porous_designer.agentic.contracts import FieldReviewDecision, FieldSource, ParsedRequestResult
 from porous_designer.domain.specification import DesignSpecification
 
 
@@ -41,7 +41,13 @@ class SpecificationReviewDialog(QDialog):
                 str(field.value),
                 f"{field.confidence:.2f} ({field.confidence_category.value})",
                 field.source.value,
-                "unsupported" if field.status == "unsupported" else "confirmation required" if field.requires_confirmation else "proposed",
+                "unsupported"
+                if field.status == "unsupported"
+                else "ASSUMED - not in your request, confirm or edit"
+                if field.source == FieldSource.DEFAULT
+                else "confirmation required"
+                if field.requires_confirmation
+                else "proposed",
             ]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)

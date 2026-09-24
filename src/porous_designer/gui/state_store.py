@@ -19,6 +19,7 @@ from porous_designer.domain.specification import (
     TargetsSpec,
 )
 from porous_designer.gui.workflow import ApplicationMode
+from porous_designer.paths import resolve_output_directory
 
 
 @dataclass
@@ -56,7 +57,7 @@ def default_specification(settings: GuiSettings | None = None) -> DesignSpecific
         ),
         export=ExportSpec(
             formats=[ExportFormat.STL],
-            output_directory=settings.default_output_folder,
+            output_directory=resolve_output_directory(settings.default_output_folder),
             output_name="pgg_scaffold",
         ),
     )

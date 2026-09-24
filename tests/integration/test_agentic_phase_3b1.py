@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from porous_designer.agentic.contracts import FieldReviewDecision
 from porous_designer.agentic.orchestrator import AgenticRequestOrchestrator
-from porous_designer.agentic.provider import ExternalAgentProviderAdapter, MockAgentProvider
+from porous_designer.agentic.provider import MockAgentProvider, OpenRouterProvider
 from porous_designer.agentic.request_parser_agent import RequestParserAgent
 from porous_designer.domain.enums import DomainShape, StructureFamily
 from porous_designer.gui.state_store import default_specification
@@ -79,7 +79,7 @@ def test_external_provider_disabled_invalid_json_timeout_and_fallback():
     from porous_designer.agentic.contracts import ProviderMode
     from porous_designer.agentic.provider_config import ExternalCallMode, ProviderSettings
 
-    assert RequestParserAgent(ExternalAgentProviderAdapter(enabled=False)).parse("Generate a 4 x 4 x 4 mm gyroid.").provider_mode == "deterministic"
-    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED)
+    assert RequestParserAgent(OpenRouterProvider()).parse("Generate a 4 x 4 x 4 mm gyroid.").provider_mode == "deterministic"
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENROUTER, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED)
     assert RequestParserAgent(MockAgentProvider(invalid_json=True), settings=settings).parse("Generate a 4 x 4 x 4 mm scaffold with hexagonal packing and pore size 1 mm.").provider_failed
     assert RequestParserAgent(MockAgentProvider(timeout=True), settings=settings).parse("Generate a 4 x 4 x 4 mm scaffold with hexagonal packing and pore size 1 mm.").provider_failed

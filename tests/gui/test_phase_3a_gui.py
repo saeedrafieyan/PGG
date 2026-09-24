@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox
 from porous_designer.agentic.contracts import FieldReviewDecision, ProviderMode
 from porous_designer.agentic.credentials import CredentialLookupResult
 from porous_designer.agentic.provider import MockAgentProvider
-from porous_designer.agentic.provider_config import CredentialMode, ExternalCallMode, ProviderSettings
+from porous_designer.agentic.provider_config import OPENROUTER_DEFAULT_MODEL, CredentialMode, ExternalCallMode, ProviderSettings
 from porous_designer.domain.enums import DomainShape, StructureFamily
 from porous_designer.domain.specification import (
     ConstraintsSpec,
@@ -90,7 +90,7 @@ def test_importing_worker_modules_does_not_create_top_level_widgets():
 def test_application_launch(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
-    assert window.windowTitle() == "PGG, Porous Geometry Generation"
+    assert window.windowTitle() == "AGE - Agentic Geometry Engineering"
     assert window.generation_panel.final_button.isEnabled()
     assert window.application_mode == ApplicationMode.MANUAL_DESIGN
 
@@ -249,6 +249,36 @@ def test_preview_panel_preset_controls_do_not_reload_geometry(qtbot):
     panel.apply_preset("High Contrast")
     assert panel.settings.preset == "High Contrast"
     assert panel._mesh_path == before
+
+
+def test_preview_toolbar_controls_wrap_without_overlap(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    panel = window.preview_panel
+    window.resize(900, 700)
+    panel.resize(360, 420)
+    window.show()
+    QApplication.processEvents()
+    controls = [
+        panel.preset_combo,
+        panel.mesh_color_button,
+        panel.background_color_button,
+        panel.edge_color_button,
+        panel.reset_rendering_button,
+        panel.reset_button,
+        panel.fit_button,
+        panel.iso_button,
+        panel.front_button,
+        panel.side_button,
+        panel.top_button,
+    ]
+    rects = []
+    for widget in controls:
+        top_left = widget.mapTo(panel, widget.rect().topLeft())
+        rects.append(widget.rect().translated(top_left))
+    for i, left in enumerate(rects):
+        for right in rects[i + 1 :]:
+            assert not left.intersects(right)
 
 
 def test_verbose_rendering_diagnostics_absent_from_preview_layout(qtbot):
@@ -525,12 +555,13 @@ def test_provider_settings_default_deterministic_and_disabled(qtbot):
 
 
 def test_provider_selector_model_category_and_missing_key(qtbot, monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     dialog = ProviderSettingsDialog(ProviderSettings())
     qtbot.addWidget(dialog)
-    dialog.provider.setCurrentText("OpenAI")
-    assert dialog.model.currentText() == "gpt-5.6-luna"
-    assert dialog.model_category.text() == "Low cost"
+    dialog.provider.setCurrentText("OpenRouter")
+    assert dialog.model.currentText() == OPENROUTER_DEFAULT_MODEL
+    assert dialog.model_category.text() == "Free"
+    assert dialog.temperature.value() == 0.0
     assert "Stored key:" in dialog.key_source.text()
 
 
@@ -551,51 +582,54 @@ def test_provider_settings_secure_key_storage_and_delete(qtbot, monkeypatch):
     monkeypatch.setattr("porous_designer.gui.dialogs.provider_settings_dialog.delete_api_key", fake_delete)
     dialog = ProviderSettingsDialog(ProviderSettings(credential_mode=CredentialMode.KEYRING))
     qtbot.addWidget(dialog)
-    dialog.provider.setCurrentText("OpenAI")
+    dialog.provider.setCurrentText("OpenRouter")
     dialog.external_access.setChecked(True)
     dialog.api_key.setText("sk-test-secret")
     dialog._save_or_apply(close=False)
-    assert stored["openai"] == "sk-test-secret"
+    assert stored["openrouter"] == "sk-test-secret"
     assert dialog.api_key.text() == ""
     assert "Stored key: Available" in dialog.key_source.text()
     dialog._delete_key()
-    assert "openai" not in stored
+    assert "openrouter" not in stored
 
 
 def test_provider_dialog_cancel_discards_unsaved_key(qtbot):
-    dialog = ProviderSettingsDialog(ProviderSettings(provider_mode=ProviderMode.OPENAI))
+    dialog = ProviderSettingsDialog(ProviderSettings(provider_mode=ProviderMode.OPENROUTER))
     qtbot.addWidget(dialog)
-    dialog.provider.setCurrentText("OpenAI")
+    dialog.provider.setCurrentText("OpenRouter")
     dialog.api_key.setText("sk-unsaved-secret")
     dialog._cancel()
     assert dialog.api_key.text() == ""
 
 
-def test_provider_connection_failure_display(qtbot):
-    dialog = ProviderSettingsDialog(ProviderSettings())
+def test_provider_connection_failure_display(qtbot, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    dialog = ProviderSettingsDialog(ProviderSettings(credential_mode=CredentialMode.ENVIRONMENT))
     qtbot.addWidget(dialog)
-    dialog.provider.setCurrentText("OpenAI")
+    dialog.provider.setCurrentText("OpenRouter")
     dialog.external_access.setChecked(True)
     dialog._test_connection()
-    assert "ok" in dialog.payload_preview.toPlainText()
+    text = dialog.payload_preview.toPlainText()
+    assert "Connection result: failed" in text
+    assert "Deterministic fallback remains available" in text
 
 
 def test_provider_test_connection_enables_temporary_session_key(qtbot, monkeypatch):
     seen = {}
 
-    class FakeOpenAIProvider:
+    class FakeOpenRouterProvider:
         def __init__(self, settings):
             seen["external_access_enabled"] = settings.external_access_enabled
             seen["credential_mode"] = settings.credential_mode
             seen["model"] = settings.selected_model()
 
         def test_connection(self):
-            return {"ok": True, "provider": "openai", "model": seen["model"], "latency_s": 0.01}
+            return {"ok": True, "provider": "openrouter", "model": seen["model"], "latency_s": 0.01, "models": []}
 
-    monkeypatch.setattr("porous_designer.gui.dialogs.provider_settings_dialog.OpenAIProvider", FakeOpenAIProvider)
-    dialog = ProviderSettingsDialog(ProviderSettings(provider_mode=ProviderMode.OPENAI, external_access_enabled=False))
+    monkeypatch.setattr("porous_designer.gui.dialogs.provider_settings_dialog.OpenRouterProvider", FakeOpenRouterProvider)
+    dialog = ProviderSettingsDialog(ProviderSettings(provider_mode=ProviderMode.OPENROUTER, external_access_enabled=False))
     qtbot.addWidget(dialog)
-    dialog.provider.setCurrentText("OpenAI")
+    dialog.provider.setCurrentText("OpenRouter")
     dialog.api_key.setText("sk-unsaved-session-secret")
     dialog._test_connection()
     assert seen["external_access_enabled"] is True
@@ -620,14 +654,40 @@ def test_provider_rebuild_and_deterministic_only_button(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     settings = ProviderSettings(external_access_enabled=True, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED)
-    settings.provider_mode = ProviderMode.OPENAI
+    settings.provider_mode = ProviderMode.OPENROUTER
     settings.bump_version()
     window._provider_settings_changed(settings)
     assert window.agentic.settings is settings
-    assert "Provider: openai" in window.agentic_request_panel.provider_status.text()
+    assert "Provider: openrouter" in window.agentic_request_panel.provider_status.text()
     window._use_deterministic_only()
     assert "Provider: deterministic" in window.agentic_request_panel.provider_status.text()
     assert not window.provider_settings.external_access_enabled
+
+
+def test_external_parse_runs_in_background_and_updates_window(qtbot):
+    import threading
+
+    from porous_designer.agentic.provider import MockAgentProvider
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._switch_to_agentic_design(confirm=False)
+    seen_threads = []
+
+    class SlowProvider(MockAgentProvider):
+        name = "slow"
+        model = "slow-model"
+
+        def parse_request(self, request, deterministic_evidence, schema):
+            seen_threads.append(threading.current_thread().name)
+            return {"provider_mode": "openrouter", "extracted_fields": []}
+
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENROUTER, external_call_mode=ExternalCallMode.ALWAYS, cache_enabled=False)
+    window._parse_agentic_request("Create a 4 x 4 x 4 mm HCP scaffold with 70% porosity.", provider=SlowProvider(), settings=settings)
+    qtbot.waitUntil(lambda: window._parse_thread is None, timeout=10000)
+    assert seen_threads and seen_threads[0] != threading.main_thread().name
+    assert window.agentic.last_result is not None
+    assert window.agentic.last_result.provider_metadata["external_execution"] == "completed"
 
 
 def test_provider_diagnostics_redacts_key(qtbot):
@@ -865,7 +925,7 @@ def test_phase_3b2_provider_enhanced_wording_does_not_add_forbidden_tools(qtbot,
     window = MainWindow()
     qtbot.addWidget(window)
     approve_agentic_hcp(window, monkeypatch)
-    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI)
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENROUTER)
     window.provider_settings = settings
     window.agentic.provider = MockAgentProvider(strategy_response={"summary": "Generate STEP and run FEA.", "tool_proposals": [{"tool_name": "fea"}]})
     window._generate_strategy_plan()

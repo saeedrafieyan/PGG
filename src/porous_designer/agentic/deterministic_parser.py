@@ -23,7 +23,10 @@ from porous_designer.agentic.contracts import (
     validate_field_value,
 )
 from porous_designer.agentic.terminology import DOMAIN_ALIASES, EXPORT_ALIASES, STRUCTURE_ALIASES, match_alias, normalize_text
-from porous_designer.agentic.unit_normalization import length_to_mm, porosity_to_fraction
+from porous_designer.agentic.unit_normalization import LENGTH_UNIT_PATTERN, length_to_mm, porosity_to_fraction
+
+# A length unit that is not the prefix of a longer word ("m" in "microns").
+_UNIT = rf"({LENGTH_UNIT_PATTERN})(?![a-zµμ])"
 from porous_designer.domain.enums import DomainShape, ExportFormat, StructureFamily
 
 
@@ -98,7 +101,7 @@ class DeterministicRequestParser:
                 )
             )
 
-        pore = self._extract_length_after(text, ("pore size", "pore diameter", "sphere diameter", "generating sphere diameter"))
+        pore = self._extract_length_after(text, ("generating sphere diameter", "sphere diameter", "pore diameter", "pore size", "pore sizes", "pores"))
         if pore:
             value, phrase = pore
             fields.append(self._field("structure.pore_diameter_mm", value, "mm", 0.92 if "generating" in phrase else 0.68, phrase, requires_confirmation="generating" not in phrase))
@@ -139,7 +142,7 @@ class DeterministicRequestParser:
         preview_res = self._extract_length_after(text, ("preview resolution",))
         if preview_res:
             fields.append(self._field("generation.preview_resolution_mm", preview_res[0], "mm", 0.94, preview_res[1]))
-        final_res = self._extract_length_after(text, ("final resolution", "resolution"))
+        final_res = self._extract_length_after(text, ("final resolution", "resolution"), exclude_prefixes=("preview ",))
         if final_res:
             fields.append(self._field("generation.final_resolution_mm", final_res[0], "mm", 0.85, final_res[1]))
 
@@ -305,7 +308,7 @@ class DeterministicRequestParser:
 
     def _extract_dimensions(self, text: str) -> tuple[list[float], str] | None:
         pattern = re.compile(
-            r"(\d+(?:\.\d+)?)\s*(?:x|by)\s*(\d+(?:\.\d+)?)\s*(?:x|by)\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|millimeters?|millimetres?)"
+            rf"(\d+(?:\.\d+)?)\s*(?:x|by)\s*(\d+(?:\.\d+)?)\s*(?:x|by)\s*(\d+(?:\.\d+)?)\s*{_UNIT}"
         )
         match = pattern.search(text)
         if not match:
@@ -315,20 +318,24 @@ class DeterministicRequestParser:
         return dims, match.group(0)
 
     def _extract_cylinder_dimensions(self, text: str) -> tuple[list[float], str] | None:
-        pattern = re.compile(r"(\d+(?:\.\d+)?)\s*(mm|cm|m)\s*diameter.*?(\d+(?:\.\d+)?)\s*(mm|cm|m)\s*(?:high|height|tall)")
+        pattern = re.compile(rf"(\d+(?:\.\d+)?)\s*{_UNIT}\s*diameter.*?(\d+(?:\.\d+)?)\s*{_UNIT}\s*(?:high|height|tall)")
         match = pattern.search(text)
         if not match:
             return None
         return [length_to_mm(float(match.group(1)), match.group(2)), length_to_mm(float(match.group(3)), match.group(4))], match.group(0)
 
-    def _extract_length_after(self, text: str, labels: tuple[str, ...]) -> tuple[float, str] | None:
+    def _extract_length_after(self, text: str, labels: tuple[str, ...], *, exclude_prefixes: tuple[str, ...] = ()) -> tuple[float, str] | None:
         for label in labels:
-            pattern = re.compile(rf"{re.escape(label)}\D{{0,24}}(\d+(?:\.\d+)?)\s*(mm|cm|m|millimeters?|millimetres?)")
+            # A generic label such as "resolution" must not re-capture a more
+            # specific one such as "preview resolution".
+            guard = "".join(rf"(?<!{re.escape(prefix)})" for prefix in exclude_prefixes)
+            label_re = rf"(?<![a-z]){guard}{re.escape(label)}(?![a-z])"
+            pattern = re.compile(rf"{label_re}\D{{0,24}}(\d+(?:\.\d+)?)\s*{_UNIT}")
             match = pattern.search(text)
             if match:
                 phrase = match.group(0)
                 return length_to_mm(float(match.group(1)), match.group(2)), phrase
-            before = re.compile(rf"(\d+(?:\.\d+)?)\s*(mm|cm|m|millimeters?|millimetres?)\s+{re.escape(label)}")
+            before = re.compile(rf"(\d+(?:\.\d+)?)\s*{_UNIT}\s+{label_re}")
             match = before.search(text)
             if match:
                 phrase = match.group(0)

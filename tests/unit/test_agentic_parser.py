@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from porous_designer.agentic.contracts import ExtractedField, FieldReviewDecision, ParsedRequestResult
 from porous_designer.agentic.deterministic_parser import DeterministicRequestParser
 from porous_designer.agentic.orchestrator import AgenticRequestOrchestrator
-from porous_designer.agentic.provider import ExternalAgentProviderAdapter, MockAgentProvider
+from porous_designer.agentic.provider import MockAgentProvider, OpenRouterProvider
 from porous_designer.agentic.request_parser_agent import RequestParserAgent
 from porous_designer.agentic.review import mark_stale
 from porous_designer.agentic.terminology import EXPORT_ALIASES, STRUCTURE_ALIASES
@@ -96,7 +96,7 @@ def test_invalid_provider_json_and_timeout_fall_back():
     from porous_designer.agentic.contracts import ProviderMode
     from porous_designer.agentic.provider_config import ExternalCallMode, ProviderSettings
 
-    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED)
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENROUTER, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED)
     invalid = RequestParserAgent(MockAgentProvider(invalid_json=True), settings=settings).parse("Generate a 4 x 4 x 4 mm scaffold with hexagonal packing and pore size 1 mm.")
     assert invalid.provider_failed
     assert invalid.provider_mode == "deterministic_fallback"
@@ -105,7 +105,7 @@ def test_invalid_provider_json_and_timeout_fall_back():
 
 
 def test_external_provider_disabled_returns_deterministic_mode():
-    result = RequestParserAgent(ExternalAgentProviderAdapter(enabled=False)).parse("Generate a 4 x 4 x 4 mm gyroid.")
+    result = RequestParserAgent(OpenRouterProvider()).parse("Generate a 4 x 4 x 4 mm gyroid.")
     assert result.provider_mode == "deterministic"
 
 

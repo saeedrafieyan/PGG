@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import threading
 from copy import deepcopy
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -33,7 +34,9 @@ from porous_designer.agentic.credentials import lookup_api_key
 from porous_designer.agentic.orchestrator import AgenticRequestOrchestrator
 from porous_designer.agentic.provider_config import ExternalCallMode, ProviderSettings, load_provider_settings, save_provider_settings
 from porous_designer.agentic.provider_errors import redact_secrets
+from porous_designer.agentic.provider import NoLLMProvider
 from porous_designer.agentic.provider_factory import provider_from_settings
+from porous_designer.paths import runs_dir
 from porous_designer.agentic.strategy import (
     PlanApprovalRecord,
     PlanExecutionSession,
@@ -100,17 +103,24 @@ def group(title: str, widget: QWidget) -> QGroupBox:
     return box
 
 
+class _ParseSignals(QObject):
+    """Delivers a background parse result to the GUI thread."""
+
+    completed = Signal(object)
+    failed = Signal(object)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         gui_event("main_window_constructing")
-        self.setWindowTitle("PGG, Porous Geometry Generation")
+        self.setWindowTitle("AGE - Agentic Geometry Engineering")
         self.setMinimumSize(1280, 820)
         self.state = StateStore(self)
-        self.history_store = RunHistoryStore(Path("runs") / "pgg_run_history.sqlite")
+        self.history_store = RunHistoryStore(runs_dir() / "pgg_run_history.sqlite")
         self.controller = ApplicationController(self.state, self.history_store, self)
         self.provider_settings = load_provider_settings()
-        self.agentic = AgenticRequestOrchestrator(provider_from_settings(self.provider_settings), audit_root=Path("runs"), settings=self.provider_settings)
+        self.agentic = AgenticRequestOrchestrator(provider_from_settings(self.provider_settings), audit_root=runs_dir(), settings=self.provider_settings)
         self.application_mode = ApplicationMode(self.state.settings.application_mode)
         self.manual_state = ManualWorkflowState.MANUAL_EMPTY
         self.agentic_state = AgenticWorkflowState.AGENTIC_REQUEST_EMPTY
@@ -133,6 +143,10 @@ class MainWindow(QMainWindow):
         self._last_provider_execution = "none"
         self._last_provider_fallback = ""
         self._applying_agentic_specification = False
+        self._parse_signals = _ParseSignals(self)
+        self._parse_signals.completed.connect(self._on_agentic_parse_completed, Qt.QueuedConnection)
+        self._parse_signals.failed.connect(self._on_agentic_parse_failed, Qt.QueuedConnection)
+        self._parse_thread: threading.Thread | None = None
         self._build_ui()
         self._connect()
         self._collect_and_validate()
@@ -265,7 +279,7 @@ class MainWindow(QMainWindow):
         dock.setWidget(self.bottom_tabs)
         dock.setAllowedAreas(Qt.BottomDockWidgetArea)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
-        self.history_panel.refresh(Path("runs"))
+        self.history_panel.refresh(runs_dir())
 
     def _connect(self) -> None:
         for panel in (self.request_panel, self.domain_panel, self.structure_panel, self.targets_panel, self.manufacturing_panel, self.generation_panel):
@@ -686,16 +700,19 @@ class MainWindow(QMainWindow):
             tool_name=f"validate_{profile}",
             run_id=self.controller.last_run_dir.name,
             status="failed" if failed else "completed",
-            scalar_result_summary={"aggregate_status": report.get("aggregate_status"), "failed_checks": [gate.check_name for gate in gates if gate.status == "FAIL"]},
+            scalar_result_summary={"overall_status": report.get("overall_status"), "failed_checks": [gate.check_name for gate in gates if gate.status == "FAIL"]},
             validation_status="fail" if failed else "pass",
             artifact_paths=[str(report_path)],
             next_recommended_action="Final validation failed. Do not use this STL as an accepted output. Review validation errors; bounded repair will be available in a later phase." if failed and profile == "final" else ("Final validation passed. Export the HTML report." if profile == "final" else "Preview validation reviewed. Generate Final only if the preview is acceptable."),
         )
         self._complete_plan_step(step_id, observation, gates, status="failed" if failed else "completed")
 
-    def _parse_agentic_request(self, request: str) -> None:
+    def _parse_agentic_request(self, request: str, *, provider=None, settings: ProviderSettings | None = None) -> None:
         if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
             self.progress_label.setText("Switch to Agentic Design before parsing natural-language requests.")
+            return
+        if self._parse_thread is not None and self._parse_thread.is_alive():
+            self.progress_label.setText("A request is already being interpreted.")
             return
         request = request.strip()
         if not request:
@@ -705,8 +722,43 @@ class MainWindow(QMainWindow):
         gui_event("agentic_parse_requested", character_count=len(request))
         self.agentic_request_panel.set_busy(True)
         self.agentic_state = AgenticWorkflowState.AGENTIC_PARSING
+        active_provider = provider or self.agentic.provider
+        active_settings = settings or self.agentic.settings
+        specification = self.controller.specification
+
+        def run():
+            return self.agentic.parse_request(request, specification, provider=active_provider, settings=active_settings)
+
+        may_call_network = (
+            not isinstance(active_provider, NoLLMProvider)
+            and active_settings.external_access_enabled
+            and active_settings.external_call_mode != ExternalCallMode.DETERMINISTIC_ONLY
+        )
+        if not may_call_network:
+            try:
+                result = run()
+            except Exception as exc:
+                self._on_agentic_parse_failed(exc)
+                return
+            self._on_agentic_parse_completed(result)
+            return
+        # External calls can take tens of seconds; keep the GUI responsive.
+        # A daemon thread never blocks application exit.
+        self.progress_label.setText(f"Interpreting request with {getattr(active_provider, 'model', 'external model')}...")
+
+        def worker():
+            try:
+                result = run()
+            except Exception as exc:
+                self._parse_signals.failed.emit(exc)
+            else:
+                self._parse_signals.completed.emit(result)
+
+        self._parse_thread = threading.Thread(target=worker, name="age-agentic-parse", daemon=True)
+        self._parse_thread.start()
+
+    def _on_agentic_parse_completed(self, result) -> None:
         try:
-            result = self.agentic.parse_request(request, self.controller.specification)
             self.agentic_proposed_specification = self.agentic.last_proposal
             self.agentic_execution_authorized = False
             self.agentic_state = (
@@ -722,13 +774,17 @@ class MainWindow(QMainWindow):
             if result.provider_failed:
                 self.progress_label.setText("External provider failed. Deterministic extraction is still available.")
             self.log_panel_message("INFO", f"Agent-assisted request parsed with {len(result.extracted_fields)} proposed fields.")
-        except Exception as exc:
-            self.agentic_state = AgenticWorkflowState.AGENTIC_FAILED
-            gui_event("agentic_parse_failed", error=str(exc))
-            self.agentic_request_panel.set_result(None, "Parser failed", str(exc))
-            self.controller.show_error("SPEC_INVALID", "Agent-assisted request parsing failed.", repr(exc))
         finally:
             self.agentic_request_panel.set_busy(False)
+            self._parse_thread = None
+
+    def _on_agentic_parse_failed(self, exc) -> None:
+        self.agentic_state = AgenticWorkflowState.AGENTIC_FAILED
+        gui_event("agentic_parse_failed", error=redact_secrets(exc))
+        self.agentic_request_panel.set_result(None, "Parser failed", redact_secrets(exc))
+        self.controller.show_error("SPEC_INVALID", "Agent-assisted request parsing failed.", redact_secrets(repr(exc)))
+        self.agentic_request_panel.set_busy(False)
+        self._parse_thread = None
 
     def _interpret_with_external_model(self, request: str) -> None:
         if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
@@ -739,7 +795,7 @@ class MainWindow(QMainWindow):
             self.agentic_request_panel.set_result(None, "Request not parsed", self.agentic.provider_status)
             return
         if not self.provider_settings.external_access_enabled or self.provider_settings.provider_mode == ProviderMode.DETERMINISTIC_ONLY:
-            self.progress_label.setText("Enable external access and select OpenAI or Gemini before forcing external interpretation.")
+            self.progress_label.setText("Enable external access and select OpenRouter before forcing external interpretation.")
             self._refresh_provider_summary()
             return
         credential = lookup_api_key(self.provider_settings.provider_mode.value, self.provider_settings.credential_mode)
@@ -747,19 +803,13 @@ class MainWindow(QMainWindow):
             self.progress_label.setText(f"Provider credential unavailable: {credential.message}")
             self._refresh_provider_summary()
             return
-        forced = ProviderSettings(**self.provider_settings.__dict__)
+        forced = self.provider_settings.copy()
         forced.external_call_mode = ExternalCallMode.ALWAYS
-        original_settings = self.agentic.settings
-        original_provider = self.agentic.provider
-        self.agentic.settings = forced
-        self.agentic.provider = provider_from_settings(forced)
         self.agentic_state = AgenticWorkflowState.AGENTIC_EXTERNAL_INTERPRETATION
-        try:
-            self._parse_agentic_request(request)
-        finally:
-            self.agentic.settings = original_settings
-            self.agentic.provider = original_provider
-            self._refresh_provider_summary()
+        # Overrides are passed per call instead of swapping the orchestrator's
+        # provider, which would race with a background parse.
+        self._parse_agentic_request(request, provider=provider_from_settings(forced), settings=forced)
+        self._refresh_provider_summary()
 
     def _review_agentic_specification(self) -> None:
         if self.application_mode != ApplicationMode.AGENTIC_DESIGN:
@@ -912,7 +962,7 @@ class MainWindow(QMainWindow):
 
     def _run_completed(self, payload: dict) -> None:
         gui_event("run_completed_ui", run_id=payload.get("run_id"), profile=payload.get("profile"))
-        self.history_panel.refresh(Path("runs"))
+        self.history_panel.refresh(runs_dir())
         self.progress_label.setText(f"Run {payload.get('run_id')} completed")
         if self.application_mode == ApplicationMode.MANUAL_DESIGN:
             self.manual_state = ManualWorkflowState.MANUAL_PREVIEWED if payload.get("profile") == "preview" else ManualWorkflowState.MANUAL_FINAL_GENERATED
@@ -973,7 +1023,7 @@ class MainWindow(QMainWindow):
             self.progress_label.setText(f"Provider rebuild failed: {redact_secrets(exc)}")
 
     def _use_deterministic_only(self) -> None:
-        settings = ProviderSettings(**self.provider_settings.__dict__)
+        settings = self.provider_settings.copy()
         settings.external_access_enabled = False
         settings.provider_mode = ProviderMode.DETERMINISTIC_ONLY
         settings.external_call_mode = ExternalCallMode.DETERMINISTIC_ONLY
@@ -1004,7 +1054,7 @@ class MainWindow(QMainWindow):
         decision = metadata.get("external_call_decision") or {}
         self._last_provider_decision = str(decision.get("decision_code", "none"))
         execution = metadata.get("external_execution", "none")
-        if execution in {"completed", "completed_after_retry"}:
+        if execution == "completed":
             provider = metadata.get("provider", self.provider_settings.provider_mode.value)
             latency = metadata.get("latency_s")
             self._last_provider_execution = f"{provider} completed" + (f" in {latency:.2f} s" if isinstance(latency, (int, float)) else "")
@@ -1052,8 +1102,7 @@ class MainWindow(QMainWindow):
             self.agentic_summary.setPlainText(
                 "No approved agentic specification yet.\n\n"
                 "The current agentic workflow interprets requirements and prepares a human-approved specification. "
-                "Automated strategy planning and bounded repair will be added in later phases.\n\n"
-                "Agent Planning: Available in Phase 3B.2"
+                "Automated strategy planning and bounded repair will be added in later phases."
             )
             self.review_approval_button.setEnabled(False)
             self.request_changes_button.setEnabled(False)
@@ -1088,8 +1137,6 @@ class MainWindow(QMainWindow):
                 f"Output formats: {[fmt.value for fmt in spec.export.formats]}",
                 f"Unsupported requests: {unsupported or 'none'}",
                 f"Assumptions: {assumptions or 'none'}",
-                "",
-                "Agent Planning: Available in Phase 3B.2",
             ]
         )
         self.agentic_summary.setPlainText(text)

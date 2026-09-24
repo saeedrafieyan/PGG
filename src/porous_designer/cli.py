@@ -13,6 +13,7 @@ from porous_designer import __version__
 from porous_designer.domain.specification import DesignSpecification, load_legacy_spec
 from porous_designer.agentic.evaluation import evaluate_deterministic
 from porous_designer.logging_config import configure_logging, get_logger
+from porous_designer.paths import runs_dir
 from porous_designer.services.generation_service import GenerationProfile, generate_porous_stl
 from porous_designer.services.mesh_optimization import OptimizationProfile, optimize_and_validate_mesh
 from porous_designer.services.mesh_optimization import validate_optimization_pair
@@ -206,18 +207,112 @@ def cmd_inspect_run(args: argparse.Namespace) -> int:
 
 
 def cmd_evaluate_agent_provider(args: argparse.Namespace) -> int:
-    if args.provider != "deterministic":
-        print("Live provider evaluation is documented but not run by default. Use pytest -m live_provider with local credentials.", file=sys.stderr)
-        return 2
-    metrics = evaluate_deterministic(args.output)
+    output = args.output or str(runs_dir() / "agentic" / f"provider_evaluation_{args.provider}.json")
+    if args.provider == "deterministic":
+        metrics = evaluate_deterministic(output)
+        print(json.dumps({k: v for k, v in metrics.items() if k != "rows"}, indent=2))
+        return 0
+    from porous_designer.agentic.contracts import ProviderMode
+    from porous_designer.agentic.evaluation import evaluate_live_provider, live_extraction_cases
+    from porous_designer.agentic.provider import OpenRouterProvider
+    from porous_designer.agentic.provider_config import CredentialMode, ExternalCallMode, ProviderSettings
+
+    settings = ProviderSettings(
+        external_access_enabled=True,
+        provider_mode=ProviderMode.OPENROUTER,
+        external_call_mode=ExternalCallMode.ALWAYS,
+        credential_mode=CredentialMode(args.credential_mode),
+        allow_provider_data_collection=args.allow_data_collection,
+    )
+    if args.model:
+        settings.openrouter_model = args.model
+    if args.no_fallback:
+        settings.openrouter_fallback_models = []
+    cases = live_extraction_cases()
+    if args.cases:
+        wanted = {c.strip() for c in args.cases.split(",") if c.strip()}
+        cases = [c for c in cases if c.identifier in wanted]
+    if args.limit:
+        cases = cases[: args.limit]
+    print(f"Running {len(cases)} live extraction cases on {settings.model_chain()} (each case uses at least one free-tier request).", file=sys.stderr)
+    metrics = evaluate_live_provider(OpenRouterProvider(settings), cases, output=output)
     print(json.dumps({k: v for k, v in metrics.items() if k != "rows"}, indent=2))
+    for row in metrics["rows"]:
+        flags = []
+        if row.get("status") != "ok":
+            flags.append(f"FAILED: {row.get('error')}")
+        if row.get("accepted_wrong"):
+            flags.append(f"WRONG {row['accepted_wrong']}")
+        if row.get("accepted_forbidden"):
+            flags.append(f"HALLUCINATED {row['accepted_forbidden']}")
+        if row.get("missing"):
+            flags.append(f"missing {row['missing']}")
+        if row.get("rejected_values"):
+            flags.append(f"caught {len(row['rejected_values'])}")
+        print(f"  {row['id']:28s} {'; '.join(flags) or 'ok'}")
+    print(f"Full results: {output}", file=sys.stderr)
+    return 0 if metrics["failed_calls"] == 0 and metrics["accepted_wrong"] == 0 and metrics["accepted_forbidden"] == 0 else 1
+
+
+def cmd_credentials(args: argparse.Namespace) -> int:
+    import getpass
+
+    from porous_designer.agentic.credentials import ENVIRONMENT_VARIABLES, delete_api_key, lookup_api_key, store_api_key
+    from porous_designer.agentic.provider_config import CredentialMode
+
+    provider = args.provider
+    if args.action == "set":
+        # The key is read without echo and goes straight to the OS credential
+        # store; it is never written to settings, logs, or run folders.
+        key = getpass.getpass(f"{provider} API key (input hidden): ").strip()
+        if not key:
+            print("No key entered; nothing stored.", file=sys.stderr)
+            return 1
+        store_api_key(provider, key)
+        found = lookup_api_key(provider, CredentialMode.KEYRING)
+        print(f"Stored in the OS credential store ({found.backend}); fingerprint {found.redacted_display}.")
+        return 0
+    if args.action == "delete":
+        try:
+            delete_api_key(provider)
+        except Exception as exc:
+            print(f"Delete failed: {exc}", file=sys.stderr)
+            return 1
+        print("Stored key deleted.")
+        return 0
+    stored = lookup_api_key(provider, CredentialMode.KEYRING)
+    env = lookup_api_key(provider, CredentialMode.ENVIRONMENT)
+    print(f"Credential store: {'available ' + stored.redacted_display if stored.available else 'not found'} ({stored.backend or stored.message})")
+    print(f"Environment {ENVIRONMENT_VARIABLES.get(provider, provider.upper() + '_API_KEY')}: {'available ' + env.redacted_display if env.available else 'not set'}")
+    return 0
+
+
+def cmd_openrouter_models(args: argparse.Namespace) -> int:
+    from porous_designer.agentic.openrouter import ModelCatalog, OpenRouterClient
+    from porous_designer.agentic.provider_config import OPENROUTER_DEFAULT_FALLBACK_MODELS, OPENROUTER_DEFAULT_MODEL
+
+    catalog = ModelCatalog(OpenRouterClient(None, timeout_s=30.0), cache_path=runs_dir() / ".cache" / "openrouter_models.json", ttl_s=0.0)
+    models = catalog.free_structured_models()
+    if catalog.last_error:
+        print(f"Catalog unavailable: {catalog.last_error}", file=sys.stderr)
+        return 1
+    defaults = {OPENROUTER_DEFAULT_MODEL, *OPENROUTER_DEFAULT_FALLBACK_MODELS}
+    print(f"Free OpenRouter models with strict structured output ({len(models)}):")
+    for caps in models:
+        marks = ["seed" if caps.supports("seed") else "no-seed"]
+        if caps.model_id in defaults:
+            marks.append("AGE default chain")
+        print(f"  {caps.model_id:55s} ctx={caps.context_length}  {', '.join(marks)}")
+    missing = sorted(m for m in defaults if catalog.is_listed(m) is False)
+    if missing:
+        print(f"Default models no longer listed: {missing}", file=sys.stderr)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="porous-designer",
-        description="Porous Structure Designer - deterministic porous scaffold generation",
+        description="AGE (Agentic Geometry Engineering) - porous scaffold generation",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -294,14 +389,27 @@ def main(argv: list[str] | None = None) -> int:
     p_cyl.add_argument("--diameter", type=float, required=True)
     p_cyl.add_argument("--height", type=float, required=True)
     p_cyl.add_argument("--resolutions", default="0.20,0.10,0.05")
-    p_cyl.add_argument("--output", default="runs/cylinder_accuracy")
+    p_cyl.add_argument("--output", default=str(runs_dir() / "cylinder_accuracy"))
     p_cyl.set_defaults(func=cmd_cylinder_accuracy)
 
-    p_eval = sub.add_parser("evaluate-agent-provider", help="Evaluate request parser/provider benchmark without generation")
-    p_eval.add_argument("--provider", choices=["deterministic", "openai", "gemini"], default="deterministic")
-    p_eval.add_argument("--model", default="")
-    p_eval.add_argument("--output", default="runs/agentic/provider_evaluation.json")
+    p_eval = sub.add_parser("evaluate-agent-provider", help="Evaluate request parsing (deterministic, or live grounded extraction via OpenRouter)")
+    p_eval.add_argument("--provider", choices=["deterministic", "openrouter"], default="deterministic")
+    p_eval.add_argument("--model", default="", help="OpenRouter model id (default: configured default)")
+    p_eval.add_argument("--no-fallback", action="store_true", help="Evaluate only --model, without fallback models")
+    p_eval.add_argument("--cases", default="", help="Comma-separated case ids to run")
+    p_eval.add_argument("--limit", type=int, default=0, help="Run at most N cases (free tier: 50 requests/day)")
+    p_eval.add_argument("--credential-mode", choices=["keyring", "environment"], default="keyring")
+    p_eval.add_argument("--allow-data-collection", action="store_true", help="Allow endpoints that may log prompts")
+    p_eval.add_argument("--output", default="")
     p_eval.set_defaults(func=cmd_evaluate_agent_provider)
+
+    p_cred = sub.add_parser("credentials", help="Store, inspect, or delete a provider API key in the OS credential store")
+    p_cred.add_argument("action", choices=["set", "status", "delete"])
+    p_cred.add_argument("--provider", default="openrouter", choices=["openrouter"])
+    p_cred.set_defaults(func=cmd_credentials)
+
+    p_models = sub.add_parser("openrouter-models", help="List free OpenRouter models that support strict structured output")
+    p_models.set_defaults(func=cmd_openrouter_models)
 
     args = parser.parse_args(argv)
     configure_logging(level="DEBUG" if args.verbose else "INFO", json_output=args.json_log)

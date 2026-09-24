@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "porous-designer"
 version = "0.1.0"
-description = "Porous Structure Designer — deterministic porous scaffold generation for research"
+description = "AGE (Agentic Geometry Engineering) — natural-language design of printable porous structures"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
@@ -32,8 +32,6 @@ gui = [
 ]
 llm = [
     "httpx>=0.27",
-    "openai>=1.0",
-    "google-genai>=0.5",
     "keyring>=25.0",
 ]
 dev = [
@@ -50,6 +48,9 @@ porous-designer-gui = "porous_designer.gui.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"porous_designer.agentic" = ["prompts/*.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
@@ -57,5 +58,5 @@ addopts = ""
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "gui: marks tests requiring PySide6",
-    "live_provider: marks optional paid/live provider tests",
+    "live_provider: marks tests that call a live provider (need an OpenRouter key; spend free-tier requests)",
 ]

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTableView, QTex
 from PySide6.QtWidgets import QHeaderView
 
 from porous_designer.gui.models.validation_table_model import ValidationTableModel
+from porous_designer.paths import runs_dir
 
 
 class ValidationPanel(QWidget):
@@ -70,6 +71,6 @@ class ValidationPanel(QWidget):
         QGuiApplication.clipboard().setText(str(row))
 
     def export_csv(self) -> None:
-        target = Path("runs") / "validation_table.csv"
+        target = runs_dir() / "validation_table.csv"
         target.parent.mkdir(exist_ok=True)
         target.write_text(self.model.rows_as_csv(), encoding="utf-8")

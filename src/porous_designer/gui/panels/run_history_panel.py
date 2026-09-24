@@ -8,6 +8,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QTableView, QVBoxLayout, QWidget
 
 from porous_designer.gui.models.run_history_model import RunHistoryModel, RunHistoryStore
+from porous_designer.paths import runs_dir
 
 
 class RunHistoryPanel(QWidget):
@@ -30,7 +31,7 @@ class RunHistoryPanel(QWidget):
         self.table = QTableView()
         self.table.setModel(self.model)
         layout.addWidget(self.table)
-        self.refresh_button.clicked.connect(lambda: self.refresh(Path("runs")))
+        self.refresh_button.clicked.connect(lambda: self.refresh(runs_dir()))
         self.open_button.clicked.connect(self._open_selected)
         self.duplicate_button.clicked.connect(self._duplicate_selected)
 

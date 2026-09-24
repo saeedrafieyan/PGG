@@ -27,7 +27,13 @@ def classify_provider_exception(provider: str, model: str, exc: Exception) -> Pr
     lowered = raw.lower()
     category = ProviderErrorCategory.PROVIDER_INTERNAL_ERROR
     retryable = False
-    if "sdk is not installed" in lowered or "could not be loaded" in lowered:
+    # Transport errors that were already classified (e.g. from the HTTP
+    # status code) keep their category instead of being re-guessed from text.
+    known = getattr(exc, "category", None)
+    if isinstance(known, ProviderErrorCategory):
+        category = known
+        retryable = bool(getattr(exc, "retryable", False))
+    elif "sdk is not installed" in lowered or "could not be loaded" in lowered:
         category = ProviderErrorCategory.PROVIDER_NOT_CONFIGURED
     elif isinstance(exc, TimeoutError) or "timeout" in lowered:
         category = ProviderErrorCategory.PROVIDER_TIMEOUT

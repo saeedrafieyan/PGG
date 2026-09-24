@@ -15,9 +15,13 @@ from porous_designer.domain.specification import DesignSpecification
 
 
 class AgenticRequestOrchestrator:
-    def __init__(self, provider: AgentProvider | None = None, *, audit_root: str | Path = "runs", settings: ProviderSettings | None = None) -> None:
+    def __init__(self, provider: AgentProvider | None = None, *, audit_root: str | Path | None = None, settings: ProviderSettings | None = None) -> None:
         self.provider = provider or NoLLMProvider()
         self.settings = settings or ProviderSettings()
+        if audit_root is None:
+            from porous_designer.paths import runs_dir
+
+            audit_root = runs_dir()
         self.audit_root = Path(audit_root)
         self.status = AgenticWorkflowStatus.REQUEST_NOT_PARSED
         self.last_request = ""
@@ -34,10 +38,18 @@ class AgenticRequestOrchestrator:
             return "External agent access disabled."
         return f"Provider available: {getattr(self.provider, 'name', 'provider')} / {getattr(self.provider, 'model', self.settings.selected_model())}"
 
-    def parse_request(self, request: str, current_specification: DesignSpecification) -> ParsedRequestResult:
+    def parse_request(
+        self,
+        request: str,
+        current_specification: DesignSpecification,
+        *,
+        provider: AgentProvider | None = None,
+        settings: ProviderSettings | None = None,
+    ) -> ParsedRequestResult:
+        """Parse a request; ``provider``/``settings`` override for this call only."""
         self.status = AgenticWorkflowStatus.PARSING
         self.last_request = request
-        agent = RequestParserAgent(self.provider, settings=self.settings, timeout_s=self.settings.timeout_s)
+        agent = RequestParserAgent(provider or self.provider, settings=settings or self.settings)
         result = agent.parse(request)
         self.last_result = result
         self.last_proposal = build_proposed_specification(current_specification, result)

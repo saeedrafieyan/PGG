@@ -7,13 +7,18 @@ import json
 from pathlib import Path
 
 from porous_designer.agentic.contracts import ParsedRequestResult
+from porous_designer.agentic.grounding import GROUNDED_PARSER_VERSION
 from porous_designer.agentic.terminology import normalize_text
 
-TERMINOLOGY_REGISTRY_VERSION = "3B.1.1"
+TERMINOLOGY_REGISTRY_VERSION = "4.0"
 
 
 class ProviderResultCache:
-    def __init__(self, root: str | Path = "runs/provider_cache", *, enabled: bool = True) -> None:
+    def __init__(self, root: str | Path | None = None, *, enabled: bool = True) -> None:
+        if root is None:
+            from porous_designer.paths import provider_cache_dir
+
+            root = provider_cache_dir()
         self.root = Path(root)
         self.enabled = enabled
 
@@ -25,6 +30,7 @@ class ProviderResultCache:
             "model": model,
             "schema_version": schema_version,
             "terminology_registry_version": TERMINOLOGY_REGISTRY_VERSION,
+            "grounded_parser_version": GROUNDED_PARSER_VERSION,
         }
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -34,7 +40,11 @@ class ProviderResultCache:
         path = self.root / f"{key}.json"
         if not path.exists():
             return None
-        return ParsedRequestResult.model_validate_json(path.read_text(encoding="utf-8"))
+        try:
+            return ParsedRequestResult.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # A corrupt or outdated entry is a cache miss, not a parse failure.
+            return None
 
     def set(self, key: str, result: ParsedRequestResult) -> None:
         if not self.enabled:

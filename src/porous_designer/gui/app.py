@@ -22,7 +22,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    cache_dir = Path.cwd() / "runs" / ".gui_cache"
+    from porous_designer.paths import runs_dir
+
+    cache_dir = runs_dir() / ".gui_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
     from porous_designer.gui.diagnostics import configure_gui_logging, gui_event

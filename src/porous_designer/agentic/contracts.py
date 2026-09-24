@@ -34,8 +34,7 @@ class AgenticWorkflowStatus(str, Enum):
 
 class ProviderMode(str, Enum):
     DETERMINISTIC_ONLY = "deterministic"
-    OPENAI = "openai"
-    GEMINI = "gemini"
+    OPENROUTER = "openrouter"
 
 
 class ProviderErrorCategory(str, Enum):
@@ -53,6 +52,8 @@ class ProviderErrorCategory(str, Enum):
     PROVIDER_CANCELLED = "PROVIDER_CANCELLED"
     PROVIDER_ESCALATION_DECLINED = "PROVIDER_ESCALATION_DECLINED"
     PROVIDER_CACHE_INVALID = "PROVIDER_CACHE_INVALID"
+    PROVIDER_REQUEST_INVALID = "PROVIDER_REQUEST_INVALID"
+    PROVIDER_OUTPUT_UNGROUNDED = "PROVIDER_OUTPUT_UNGROUNDED"
 
 
 class ExternalCallDecisionCode(str, Enum):

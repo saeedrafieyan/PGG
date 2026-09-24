@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import QPoint, QRect, QSize, Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -17,9 +17,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -38,6 +38,73 @@ from porous_designer.gui.rendering import (
     rendering_diagnostics_model,
     save_rendering_settings,
 )
+
+
+class FlowLayout(QLayout):
+    """Small wrapping layout for dense preview controls."""
+
+    def __init__(self, parent=None, margin: int = 0, horizontal_spacing: int = 8, vertical_spacing: int = 4) -> None:
+        super().__init__(parent)
+        self._items = []
+        self._horizontal_spacing = horizontal_spacing
+        self._vertical_spacing = vertical_spacing
+        self.setContentsMargins(margin, margin, margin, margin)
+
+    def addItem(self, item) -> None:
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientations(Qt.Orientation(0))
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect: QRect) -> None:
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+        return size
+
+    def _do_layout(self, rect: QRect, *, test_only: bool) -> int:
+        margins = self.contentsMargins()
+        effective = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
+        x = effective.x()
+        y = effective.y()
+        line_height = 0
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + self._horizontal_spacing
+            if next_x - self._horizontal_spacing > effective.right() and line_height > 0:
+                x = effective.x()
+                y = y + line_height + self._vertical_spacing
+                next_x = x + hint.width() + self._horizontal_spacing
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x
+            line_height = max(line_height, hint.height())
+        return y + line_height - rect.y() + margins.bottom()
 
 
 class PreviewPanel(QWidget):
@@ -74,9 +141,7 @@ class PreviewPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
-        controls = QGridLayout()
-        controls.setHorizontalSpacing(8)
-        controls.setVerticalSpacing(4)
+        controls = FlowLayout(horizontal_spacing=8, vertical_spacing=4)
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(PRESETS.keys())
         self.preset_combo.setCurrentText(self.settings.preset)
@@ -91,27 +156,23 @@ class PreviewPanel(QWidget):
         self.front_button = QPushButton("Front")
         self.side_button = QPushButton("Side")
         self.top_button = QPushButton("Top")
-        for column, widget in enumerate(
-            (
-                self.preset_combo,
-                self.mesh_color_button,
-                self.background_color_button,
-                self.edge_color_button,
-                self.reset_rendering_button,
-                self.reset_button,
-                self.fit_button,
-                self.iso_button,
-                self.front_button,
-                self.side_button,
-                self.top_button,
-            )
+        for widget in (
+            self.preset_combo,
+            self.mesh_color_button,
+            self.background_color_button,
+            self.edge_color_button,
+            self.reset_rendering_button,
+            self.reset_button,
+            self.fit_button,
+            self.iso_button,
+            self.front_button,
+            self.side_button,
+            self.top_button,
         ):
-            controls.addWidget(widget, 0, column)
+            controls.addWidget(widget)
         layout.addLayout(controls)
 
-        display = QGridLayout()
-        display.setHorizontalSpacing(8)
-        display.setVerticalSpacing(4)
+        display = FlowLayout(horizontal_spacing=8, vertical_spacing=4)
         self.smooth = QCheckBox("Smooth")
         self.smooth.setChecked(self.settings.smooth_shading)
         self.edges = QCheckBox("Edges")
@@ -148,13 +209,11 @@ class PreviewPanel(QWidget):
             QLabel("Edge Width"),
             self.edge_width,
         )
-        for column, widget in enumerate(display_widgets):
-            display.addWidget(widget, 0, column)
+        for widget in display_widgets:
+            display.addWidget(widget)
         layout.addLayout(display)
 
-        clip = QGridLayout()
-        clip.setHorizontalSpacing(8)
-        clip.setVerticalSpacing(4)
+        clip = FlowLayout(horizontal_spacing=8, vertical_spacing=4)
         self.clip_x = QCheckBox("Clip X")
         self.clip_y = QCheckBox("Clip Y")
         self.clip_z = QCheckBox("Clip Z")
@@ -187,9 +246,8 @@ class PreviewPanel(QWidget):
             self.transparent_background,
             self.operation_label,
         )
-        for column, widget in enumerate(clip_widgets):
-            clip.addWidget(widget, 0, column)
-        clip.setColumnStretch(5, 1)
+        for widget in clip_widgets:
+            clip.addWidget(widget)
         layout.addLayout(clip)
 
         self.status_frame = QFrame()

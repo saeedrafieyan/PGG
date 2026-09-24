@@ -9,8 +9,9 @@ from porous_designer.agentic.provider_config import CredentialMode
 from porous_designer.agentic.provider_errors import redact_secrets
 
 
-SERVICE_NAME = "PGG Agent Providers"
+SERVICE_NAME = "AGE Agent Providers"
 SESSION_KEYS: dict[str, str] = {}
+ENVIRONMENT_VARIABLES = {"openrouter": "OPENROUTER_API_KEY"}
 
 
 class CredentialError(RuntimeError):
@@ -28,7 +29,7 @@ class CredentialLookupResult:
 
 
 def lookup_api_key(provider: str, mode: CredentialMode = CredentialMode.KEYRING) -> CredentialLookupResult:
-    env_name = "OPENAI_API_KEY" if provider == "openai" else "GEMINI_API_KEY"
+    env_name = ENVIRONMENT_VARIABLES.get(provider, f"{provider.upper()}_API_KEY")
     if mode == CredentialMode.ENVIRONMENT:
         value = os.environ.get(env_name)
         return CredentialLookupResult(bool(value), "environment", redact_for_display(value) if value else "", value, message=f"Environment variable: {env_name}" if value else f"Environment variable not found: {env_name}")

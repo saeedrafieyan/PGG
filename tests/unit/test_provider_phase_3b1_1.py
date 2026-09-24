@@ -11,128 +11,79 @@ from porous_designer.agentic.credentials import lookup_api_key
 from porous_designer.agentic.deterministic_parser import DeterministicRequestParser
 from porous_designer.agentic.disagreement import detect_provider_disagreements
 from porous_designer.agentic.evaluation import benchmark_cases, evaluate_deterministic
-from porous_designer.agentic.provider import GeminiProvider, MockAgentProvider, OpenAIProvider
-from porous_designer.agentic.provider_config import CredentialMode, ExternalCallMode, GEMINI_LOW_COST_MODEL, OPENAI_ESCALATION_MODEL, OPENAI_LOW_COST_MODEL, ProviderSettings
+from porous_designer.agentic.provider import MockAgentProvider, OpenRouterProvider
+from porous_designer.agentic.provider_config import OPENROUTER_DEFAULT_MODEL, CredentialMode, ExternalCallMode, ProviderSettings
 from porous_designer.agentic.provider_errors import classify_provider_exception, redact_secrets
 from porous_designer.agentic.request_parser_agent import RequestParserAgent
 from porous_designer.agentic.orchestrator import AgenticRequestOrchestrator
 from porous_designer.gui.state_store import default_specification
 
 
-class FakeOpenAIResponses:
-    def __init__(self, payload):
-        self.payload = payload
+class FakeOpenRouterClient:
+    def __init__(self, content: str = "{}", key_info: dict | None = None, error: Exception | None = None):
+        self.content = content
+        self._key_info = key_info or {"label": "test", "is_free_tier": True}
+        self.error = error
         self.calls = []
 
-    def create(self, **kwargs):
-        self.calls.append(kwargs)
+    def chat(self, body, *, timeout_s=None):
+        from porous_designer.agentic.openrouter import ChatResult
 
-        class Response:
-            output_text = self.payload
+        self.calls.append(body)
+        return ChatResult(content=self.content, model=body["model"], upstream_provider="FakeUpstream", generation_id="gen-1", finish_reason="stop")
 
-        return Response()
-
-
-class FakeOpenAIClient:
-    def __init__(self, payload):
-        self.responses = FakeOpenAIResponses(payload)
+    def key_info(self):
+        if self.error:
+            raise self.error
+        return self._key_info
 
 
-class FakeGeminiModels:
-    def __init__(self, payload):
-        self.payload = payload
-        self.calls = []
+class FakeCatalog:
+    def __init__(self, entries: dict | None = None):
+        self._entries = entries if entries is not None else {
+            OPENROUTER_DEFAULT_MODEL: {"id": OPENROUTER_DEFAULT_MODEL, "supported_parameters": ["structured_outputs", "response_format", "temperature", "seed", "max_tokens", "reasoning"]},
+        }
+        self.last_error = None
 
-    def generate_content(self, **kwargs):
-        self.calls.append(kwargs)
+    def capabilities(self, model_id):
+        from porous_designer.agentic.openrouter import ModelCapabilities
 
-        class Response:
-            text = self.payload
+        entry = self._entries.get(model_id)
+        return ModelCapabilities.from_catalog_entry(entry) if entry else ModelCapabilities.unknown(model_id)
 
-        return Response()
-
-
-class FakeGeminiClient:
-    def __init__(self, payload):
-        self.models = FakeGeminiModels(payload)
+    def is_listed(self, model_id):
+        return model_id in self._entries
 
 
-class FakeGeminiInteractions:
-    def __init__(self, payload):
-        self.payload = payload
-        self.calls = []
-
-    def create(self, **kwargs):
-        self.calls.append(kwargs)
-
-        class Response:
-            output_text = self.payload
-
-        return Response()
+def openrouter_provider(content="{}", **client_kwargs):
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENROUTER, openrouter_fallback_models=[])
+    return OpenRouterProvider(settings, client=FakeOpenRouterClient(content, **client_kwargs), catalog=FakeCatalog(), sleep=lambda s: None)
 
 
-class FakeGeminiInteractionsClient:
-    def __init__(self, payload):
-        self.interactions = FakeGeminiInteractions(payload)
+def test_openrouter_defaults_and_request_construction():
+    provider = openrouter_provider('{"structure_family": {"value": "gyroid", "quote": "gyroid"}}')
+    result = provider.parse_request("Create a gyroid.", {}, {})
+    assert provider.model == OPENROUTER_DEFAULT_MODEL
+    call = provider.client.calls[0]
+    assert call["model"] == OPENROUTER_DEFAULT_MODEL
+    assert call["response_format"]["type"] == "json_schema"
+    assert call["response_format"]["json_schema"]["strict"] is True
+    assert call["temperature"] == 0.0
+    assert call["provider"]["require_parameters"] is True
+    assert call["provider"]["data_collection"] == "deny"
+    assert result["provider_metadata"]["provider"] == "openrouter"
+    assert result["provider_metadata"]["upstream_provider"] == "FakeUpstream"
 
 
-def minimal_result(provider_mode="openai"):
-    return {
-        "schema_version": "1.0",
-        "provider_mode": provider_mode,
-        "parser_version": "3B.1",
-        "extracted_fields": [],
-        "ambiguities": [],
-        "missing_requirements": [],
-        "unsupported_requests": [],
-        "assumptions": [],
-        "evidence": [],
-    }
-
-
-def test_openai_defaults_and_request_construction():
-    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI)
-    provider = OpenAIProvider(settings, client=FakeOpenAIClient(__import__("json").dumps(minimal_result("openai"))))
-    result = provider.parse_request("test", minimal_result(), {})
-    assert provider.model == OPENAI_LOW_COST_MODEL
-    call = provider.client.responses.calls[0]
-    assert call["model"] == OPENAI_LOW_COST_MODEL
-    assert call["text"]["format"]["strict"] is True
-    assert result["provider_metadata"]["provider"] == "openai"
-
-
-def test_openai_escalation_and_custom_model_ids():
-    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI, openai_model=OPENAI_ESCALATION_MODEL)
-    assert OpenAIProvider(settings, client=FakeOpenAIClient("{}")).model == OPENAI_ESCALATION_MODEL
-    settings.custom_model_id = "custom-openai-model"
-    assert OpenAIProvider(settings, client=FakeOpenAIClient("{}")).model == "custom-openai-model"
-
-
-def test_gemini_defaults_and_request_construction():
-    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.GEMINI)
-    provider = GeminiProvider(settings, client=FakeGeminiClient(__import__("json").dumps(minimal_result("gemini"))))
-    result = provider.parse_request("test", minimal_result(), {})
-    assert provider.model == GEMINI_LOW_COST_MODEL
-    call = provider.client.models.calls[0]
-    assert call["model"] == GEMINI_LOW_COST_MODEL
-    assert call["config"]["response_mime_type"] == "application/json"
-    assert result["provider_metadata"]["provider"] == "gemini"
-
-
-def test_gemini_prefers_current_interactions_api():
-    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.GEMINI)
-    provider = GeminiProvider(settings, client=FakeGeminiInteractionsClient(__import__("json").dumps(minimal_result("gemini"))))
-    result = provider.parse_request("test", minimal_result(), {})
-    call = provider.client.interactions.calls[0]
-    assert call["model"] == GEMINI_LOW_COST_MODEL
-    assert call["response_format"]["mime_type"] == "application/json"
-    assert call["response_format"]["schema"] == {}
-    assert result["provider_metadata"]["provider"] == "gemini"
+def test_openrouter_custom_model_id():
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENROUTER, openrouter_model="vendor/custom:free")
+    assert OpenRouterProvider(settings, client=FakeOpenRouterClient()).model == "vendor/custom:free"
+    assert settings.selected_category() == "Free"
 
 
 def test_environment_key_discovery_and_redaction(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-testSECRET123456")
-    found = lookup_api_key("openai", CredentialMode.ENVIRONMENT)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-testSECRET123456")
+    found = lookup_api_key("openrouter", CredentialMode.ENVIRONMENT)
     assert found.available
     assert found.source == "environment"
     assert "SECRET" not in found.redacted_display
@@ -150,11 +101,11 @@ def test_provider_disabled_and_call_decisions():
 
 
 def test_connection_success_and_failure():
-    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI)
-    ok = OpenAIProvider(settings, client=FakeOpenAIClient(__import__("json").dumps({"ok": True, "provider": "openai"}))).test_connection()
+    ok = openrouter_provider(key_info={"label": "k", "is_free_tier": True, "free_model_daily_requests": {"used": 1, "limit": 50, "remaining": 49}}).test_connection()
     assert ok["ok"] is True
     assert ok["structured_output"] is True
-    fail = OpenAIProvider(settings, client=FakeOpenAIClient("{bad json")).test_connection()
+    assert ok["key"]["free_model_daily_requests"]["remaining"] == 49
+    fail = openrouter_provider(error=RuntimeError("401 unauthorized")).test_connection()
     assert fail["ok"] is False
 
 
@@ -169,7 +120,7 @@ def test_timeout_rate_limit_quota_model_error_classification():
 def test_malformed_json_schema_mismatch_retry_and_fallback():
     result = RequestParserAgent(
         MockAgentProvider(invalid_json=True),
-        settings=ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED),
+        settings=ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENROUTER, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED),
     ).parse("Create a 4 x 4 x 4 mm scaffold with hexagonal packing and pore size 1 mm.")
     assert result.provider_failed
     assert result.provider_mode == "deterministic_fallback"

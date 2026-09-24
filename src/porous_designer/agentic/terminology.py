@@ -35,6 +35,10 @@ STRUCTURE_ALIASES: dict[str, StructureFamily] = {
     "diamond tpms": StructureFamily.DIAMOND,
     "primitive": StructureFamily.PRIMITIVE,
     "primitive tpms": StructureFamily.PRIMITIVE,
+    "schwarz p": StructureFamily.PRIMITIVE,
+    "schwarz primitive": StructureFamily.PRIMITIVE,
+    "schwarz d": StructureFamily.DIAMOND,
+    "schwarz diamond": StructureFamily.DIAMOND,
 }
 
 DOMAIN_ALIASES: dict[str, DomainShape] = {
@@ -49,6 +53,45 @@ EXPORT_ALIASES: dict[str, ExportFormat] = {
     "stl": ExportFormat.STL,
     "step": ExportFormat.STEP,
     "stp": ExportFormat.STEP,
+}
+
+# Canonical manufacturing-process codes. Values are plain strings because
+# ManufacturingSpec.process is free text; these are the only codes the agent
+# layer proposes.
+PROCESS_ALIASES: dict[str, str] = {
+    "fdm": "fdm",
+    "fff": "fdm",
+    "fused deposition": "fdm",
+    "fused deposition modeling": "fdm",
+    "fused deposition modelling": "fdm",
+    "fused filament": "fdm",
+    "fused filament fabrication": "fdm",
+    "sla": "sla",
+    "stereolithography": "sla",
+    "msla": "sla",
+    "dlp": "dlp",
+    "digital light processing": "dlp",
+    "volumetric": "volumetric",
+    "volumetric printing": "volumetric",
+    "volumetric printer": "volumetric",
+    "volumetric additive manufacturing": "volumetric",
+    "tomographic": "volumetric",
+    "tomographic printing": "volumetric",
+    "xolography": "volumetric",
+    "sls": "sls",
+    "selective laser sintering": "sls",
+    "lpbf": "lpbf",
+    "l-pbf": "lpbf",
+    "slm": "lpbf",
+    "dmls": "lpbf",
+    "laser powder bed fusion": "lpbf",
+    "powder bed fusion": "lpbf",
+    "bioprinting": "bioprinting",
+    "bioprinter": "bioprinting",
+    "bioprinted": "bioprinting",
+    "two-photon": "two_photon",
+    "two photon": "two_photon",
+    "2pp": "two_photon",
 }
 
 TERMINOLOGY: dict[str, Term] = {
@@ -80,9 +123,14 @@ TERMINOLOGY: dict[str, Term] = {
 }
 
 
+# "0,5 mm" -> "0.5 mm" (decimal comma), but "4,4,4" and "1, 2" are left as
+# separators. Must run before commas are turned into spaces.
+_DECIMAL_COMMA = re.compile(r"(?<![\d,])(\d+),(\d+)(?![\d,])")
+
+
 def normalize_text(text: str) -> str:
     return (
-        text.lower()
+        _DECIMAL_COMMA.sub(r"\1.\2", text.lower())
         .replace("×", " x ")
         .replace("–", "-")
         .replace("—", "-")

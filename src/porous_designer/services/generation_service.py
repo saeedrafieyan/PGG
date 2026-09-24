@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import time
 import tracemalloc
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ from porous_designer.generators.registry import get_generator
 from porous_designer.geometry.connectivity import analyze_void_connectivity
 from porous_designer.geometry.domains import build_domain_grid, domain_volume
 from porous_designer.geometry.mesh import mesh_porosity, solid_grid_to_mesh
+from porous_designer.paths import default_config_path
 from porous_designer.geometry.voxel import (
     remove_small_solid_components,
     void_grid,
@@ -80,9 +82,10 @@ class GenerationResult:
     optimization: MeshOptimizationResult | None = None
 
 
-def load_app_config(path: str | Path = "configs/default.yaml") -> dict[str, Any]:
-    p = Path(path)
+def load_app_config(path: str | Path | None = None) -> dict[str, Any]:
+    p = Path(path) if path is not None else default_config_path()
     if not p.exists():
+        logging.getLogger(__name__).warning("Configuration file not found at %s; using built-in defaults.", p)
         return {}
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
 
@@ -110,7 +113,12 @@ def generate_porous_stl(
     blackboard: Blackboard | None = None,
     config: dict[str, Any] | None = None,
 ) -> GenerationResult:
-    """End-to-end deterministic STL pipeline for registered generators."""
+    """End-to-end deterministic STL pipeline for registered generators.
+
+    The caller's specification is never modified; the tuned control parameter
+    is recorded on a private copy that is saved as ``approved_specification.yaml``.
+    """
+    spec = spec.model_copy(deep=True)
     generator = get_generator(spec.structure.family)
     generator.validate_specification(spec)
     if spec.domain.shape not in generator.supported_domains():

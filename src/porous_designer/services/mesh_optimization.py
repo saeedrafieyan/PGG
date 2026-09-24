@@ -151,12 +151,18 @@ def optimize_and_validate_mesh(
             None,
         )
 
-    tracemalloc.start()
+    # The generation pipeline may already be tracing; starting/stopping here
+    # would discard its measurement. In that case report the traced peak so
+    # far, which is an upper bound for the optimization step.
+    owns_trace = not tracemalloc.is_tracing()
+    if owns_trace:
+        tracemalloc.start()
     t0 = time.perf_counter()
     candidate = optimize_mesh_candidate(mesh, profile)
     optimization_runtime = time.perf_counter() - t0
     _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    if owns_trace:
+        tracemalloc.stop()
     peak_mb = peak / (1024 * 1024)
     if candidate is None:
         return (

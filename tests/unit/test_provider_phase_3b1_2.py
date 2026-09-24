@@ -75,8 +75,9 @@ def test_provider_settings_persist_without_secret(isolated_qsettings):
     secret = "sk-test-PERSISTENCE-SECRET"
     settings = ProviderSettings(
         external_access_enabled=True,
-        provider_mode=ProviderMode.OPENAI,
-        openai_model="gpt-5.6-luna",
+        provider_mode=ProviderMode.OPENROUTER,
+        openrouter_model="qwen/qwen3.8-27b:free",
+        openrouter_fallback_models=["a/b:free", "c/d:free"],
         timeout_s=22.0,
         max_retries=2,
         credential_mode=CredentialMode.KEYRING,
@@ -86,8 +87,10 @@ def test_provider_settings_persist_without_secret(isolated_qsettings):
     save_provider_settings(settings)
     loaded = load_provider_settings()
     assert loaded.external_access_enabled is True
-    assert loaded.provider_mode == ProviderMode.OPENAI
-    assert loaded.openai_model == "gpt-5.6-luna"
+    assert loaded.provider_mode == ProviderMode.OPENROUTER
+    assert loaded.openrouter_model == "qwen/qwen3.8-27b:free"
+    assert loaded.openrouter_fallback_models == ["a/b:free", "c/d:free"]
+    assert loaded.temperature == 0.0
     assert loaded.timeout_s == 22.0
     assert loaded.max_retries == 2
     assert loaded.external_call_mode == ExternalCallMode.WHEN_RECOMMENDED
@@ -151,7 +154,7 @@ def test_external_call_modes_control_provider_invocation():
 
     ambiguous = "Create a scaffold with hexagonal packing and pore size 1 mm."
     explicit = "Create a 4 x 4 x 4 mm HCP scaffold with 70% porosity."
-    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENAI, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED)
+    settings = ProviderSettings(external_access_enabled=True, provider_mode=ProviderMode.OPENROUTER, external_call_mode=ExternalCallMode.WHEN_RECOMMENDED)
     RequestParserAgent(CountingProvider(), settings=settings, cache=ProviderResultCache(enabled=False)).parse(ambiguous)
     assert calls["count"] == 1
     RequestParserAgent(CountingProvider(), settings=settings, cache=ProviderResultCache(enabled=False)).parse(explicit)
@@ -162,3 +165,13 @@ def test_external_call_modes_control_provider_invocation():
     settings.external_call_mode = ExternalCallMode.DETERMINISTIC_ONLY
     RequestParserAgent(CountingProvider(), settings=settings, cache=ProviderResultCache(enabled=False)).parse(ambiguous)
     assert calls["count"] == 2
+
+
+def test_pre_openrouter_settings_fall_back_to_deterministic(isolated_qsettings):
+    isolated_qsettings.setValue("agent_provider/settings_schema_version", 2)
+    isolated_qsettings.setValue("agent_provider/provider_mode", "openai")
+    isolated_qsettings.setValue("agent_provider/external_access_enabled", True)
+    isolated_qsettings.sync()
+    loaded = load_provider_settings()
+    assert loaded.provider_mode == ProviderMode.DETERMINISTIC_ONLY
+    assert loaded.external_access_enabled is False

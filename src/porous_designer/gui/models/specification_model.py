@@ -19,6 +19,7 @@ from porous_designer.domain.specification import (
     StructureSpec,
     TargetsSpec,
 )
+from porous_designer.paths import resolve_output_directory
 
 
 SPHERE_FAMILIES = {
@@ -107,7 +108,7 @@ class SpecificationModel(QObject):
                     maximum_runtime_s=float(data["maximum_runtime_s"]),
                 ),
                 export=ExportSpec(
-                    output_directory=data["output_directory"],
+                    output_directory=resolve_output_directory(data["output_directory"]),
                     output_name=data["output_name"],
                 ),
             )

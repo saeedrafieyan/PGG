@@ -5,18 +5,43 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from porous_designer.agentic.contracts import ApprovalRecord, FieldReviewDecision, ParsedRequestResult, validate_field_value
+from porous_designer.agentic.contracts import (
+    ApprovalRecord,
+    Assumption,
+    ExtractedField,
+    FieldReviewDecision,
+    FieldSource,
+    ParsedRequestResult,
+    validate_field_value,
+)
 from porous_designer.domain.enums import StructureFamily
 from porous_designer.domain.specification import DesignSpecification
 
 
+# Values used only when neither the request nor the current specification
+# provides the parameter the chosen family needs. They are always shown to the
+# user as confirmation-required rows, never applied silently.
+STRUCTURE_PARAMETER_DEFAULTS_MM = {
+    "structure.pore_diameter_mm": 1.0,
+    "structure.unit_cell_size_mm": 1.5,
+}
+
+
 def build_proposed_specification(current: DesignSpecification, parsed: ParsedRequestResult) -> DesignSpecification:
+    """Preview specification from the auto-applicable fields of ``parsed``.
+
+    If the chosen family needs a parameter the request did not state, a
+    DEFAULT-source field is appended to ``parsed.extracted_fields`` (and an
+    assumption recorded) so the review step shows where the value came from.
+    """
     data = current.model_dump(mode="json")
     for field in parsed.extracted_fields:
         if field.requires_confirmation or field.status == "unsupported":
             continue
         _set_path(data, field.field_path, validate_field_value(field.field_path, field.value))
-    _repair_structure_parameters(data)
+    required = _clear_irrelevant_structure_parameters(data)
+    if required is not None:
+        _propose_required_parameter(data, parsed, required)
     return DesignSpecification.model_validate(data)
 
 
@@ -28,7 +53,12 @@ def apply_review_decisions(current: DesignSpecification, parsed: ParsedRequestRe
             continue
         value = decision.edited_value if decision.decision == "edited" else field_map[decision.field_path].value
         _set_path(data, decision.field_path, validate_field_value(decision.field_path, value))
-    _repair_structure_parameters(data)
+    required = _clear_irrelevant_structure_parameters(data)
+    if required is not None and _get_path(data, required) is None:
+        family = data["structure"]["family"]
+        raise ValueError(
+            f"{required} is required for {family} but was not approved. Accept the proposed value or enter one before approval."
+        )
     return DesignSpecification.model_validate(data)
 
 
@@ -73,15 +103,52 @@ def _set_path(data: dict[str, Any], dotted: str, value: Any) -> None:
     target[parts[-1]] = value
 
 
-def _repair_structure_parameters(data: dict[str, Any]) -> None:
+def _get_path(data: dict[str, Any], dotted: str) -> Any:
+    target: Any = data
+    for part in dotted.split("."):
+        if not isinstance(target, dict):
+            return None
+        target = target.get(part)
+    return target
+
+
+def _clear_irrelevant_structure_parameters(data: dict[str, Any]) -> str | None:
+    """Null the parameters the family does not use; return the one it needs."""
     family = StructureFamily(data["structure"]["family"])
     if family.is_sphere_lattice:
         data["structure"]["unit_cell_size_mm"] = None
         data["structure"]["tpms_level_set"] = None
-        if data["structure"].get("pore_diameter_mm") is None:
-            data["structure"]["pore_diameter_mm"] = 1.0
+        return "structure.pore_diameter_mm"
     if family.is_tpms:
         data["structure"]["pore_diameter_mm"] = None
         data["structure"]["lattice_spacing_mm"] = None
-        if data["structure"].get("unit_cell_size_mm") is None:
-            data["structure"]["unit_cell_size_mm"] = 1.5
+        return "structure.unit_cell_size_mm"
+    return None
+
+
+def _propose_required_parameter(data: dict[str, Any], parsed: ParsedRequestResult, path: str) -> None:
+    stated = next((f for f in parsed.extracted_fields if f.field_path == path and f.status != "unsupported"), None)
+    if stated is not None:
+        # The request states it but it still needs confirmation; preview it.
+        if _get_path(data, path) is None:
+            _set_path(data, path, validate_field_value(path, stated.value))
+        return
+    current = _get_path(data, path)
+    if current is not None:
+        value, rationale = current, "Not stated in the request; kept from the current specification."
+    else:
+        value, rationale = STRUCTURE_PARAMETER_DEFAULTS_MM[path], "Not stated in the request; generic default proposed for review."
+        _set_path(data, path, value)
+    parsed.extracted_fields.append(
+        ExtractedField(
+            field_path=path,
+            value=value,
+            unit="mm",
+            confidence=0.5,
+            source_text="",
+            source=FieldSource.DEFAULT,
+            requires_confirmation=True,
+        )
+    )
+    if not any(a.field_path == path for a in parsed.assumptions):
+        parsed.assumptions.append(Assumption(field_path=path, value=value, rationale=rationale, requires_confirmation=True))
