@@ -1,0 +1,17 @@
+# Octet-truss strut lattice filling a 12 mm sphere, 80 % porosity.
+source_text: "Phase 4.1 example: octet truss sphere"
+domain:
+  shape: sphere
+  dimensions_mm: [12.0]
+structure:
+  family: strut_octet
+  unit_cell_size_mm: 3.0
+targets:
+  porosity_target: {target: 0.80, tolerance: 0.02}
+generation:
+  preview_resolution_mm: 0.2
+  final_resolution_mm: 0.08
+export:
+  formats: [stl, 3mf]
+  output_directory: runs/phase_4_1
+  output_name: octet_sphere

@@ -1,0 +1,18 @@
+# Kelvin-cell struts whose cell size grows from 1.5 mm (bottom) to 3 mm (top), 80 % porosity.
+source_text: "Phase 4.1 example: cell-size graded Kelvin lattice"
+domain:
+  shape: box
+  dimensions_mm: [10.0, 10.0, 12.0]
+structure:
+  family: strut_kelvin
+  unit_cell_size_mm: 2.0
+  cell_size_grading: {mode: linear, axis: z, start: 1.5, end: 3.0}
+targets:
+  porosity_target: {target: 0.80, tolerance: 0.02}
+generation:
+  preview_resolution_mm: 0.2
+  final_resolution_mm: 0.08
+export:
+  formats: [stl, 3mf]
+  output_directory: runs/phase_4_1
+  output_name: cell_graded_kelvin

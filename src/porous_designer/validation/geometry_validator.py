@@ -15,7 +15,17 @@ def validate_dimensions(
     bounds_max: Sequence[float],
     expected_dims: Sequence[float],
     tolerance_mm: float,
+    *,
+    undersize_is_warning: bool = False,
 ) -> list[ValidationCheck]:
+    """Compare the mesh bounding box with the domain bounding box.
+
+    A curved or scanned domain touches its bounding box only at points or
+    lines; a pore that happens to sit there makes the porous part slightly
+    smaller without anything being wrong. With ``undersize_is_warning`` such
+    a shortfall is reported as a warning, while an oversize part (material
+    outside the domain) always fails.
+    """
     achieved = np.array(bounds_max) - np.array(bounds_min)
     checks = []
     names = ["X", "Y", "Z"]
@@ -23,6 +33,14 @@ def validate_dimensions(
         exp = expected_dims[i]
         ach = float(achieved[i])
         ok = abs(ach - exp) <= tolerance_mm
+        soft = not ok and undersize_is_warning and ach < exp
+        if ok:
+            status, severity, message = ValidationStatus.PASS, Severity.INFO, f"{name} dimension within tolerance."
+        elif soft:
+            status, severity = ValidationStatus.WARNING, Severity.WARNING
+            message = f"{name} extent is {exp - ach:.3f} mm short of the domain: pores lie on the domain's extreme points. Add a solid skin if the full size is needed."
+        else:
+            status, severity, message = ValidationStatus.FAIL, Severity.CRITICAL, f"{name} dimension outside tolerance."
         checks.append(
             ValidationCheck(
                 name=f"domain_dimension_{name.lower()}_mm",
@@ -30,10 +48,10 @@ def validate_dimensions(
                 achieved_value=round(ach, 4),
                 units="mm",
                 tolerance=tolerance_mm,
-                status=ValidationStatus.PASS if ok else ValidationStatus.FAIL,
-                severity=Severity.CRITICAL if not ok else Severity.INFO,
+                status=status,
+                severity=severity,
                 method="mesh bounding box",
-                message=f"{name} dimension {'within' if ok else 'outside'} tolerance.",
+                message=message,
             )
         )
     return checks

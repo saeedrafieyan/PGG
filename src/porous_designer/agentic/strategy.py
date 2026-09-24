@@ -226,6 +226,7 @@ def deterministic_strategy_plan(
     family = specification.structure.family
     is_tpms = family.is_tpms
     family_label = family.value.replace("_", " ")
+    export_label = ", ".join(f.value.upper() for f in specification.export.formats)
     dimension_label = " x ".join(f"{value:g}" for value in specification.domain.dimensions_mm)
     summary = (
         f"Plan deterministic estimate, preview, validation, final STL generation, final validation, "
@@ -237,22 +238,22 @@ def deterministic_strategy_plan(
         _step("step_2", "Generate preview", "Generate a lower-resolution STL preview using the preview profile.", "generate_preview", ["approved DesignSpecification", "preview resolution"], ["preview STL", "preview validation report"], ["resource estimate reviewed"], ["preview artifact exists"], "Stop and report deterministic generation error.", True),
         _step("step_3", "Validate preview", "Review approximate porosity, connectivity, topology, and visual structure.", "validate_preview", ["preview STL", "preview validation report"], ["preview validation status"], ["preview generated"], ["preview validation is reviewed"], "Adjust specification through human review if validation is unacceptable.", False),
         _step("step_4", "User checkpoint before final", "Ask the user whether the preview is acceptable before final generation.", None, ["preview validation status"], ["proceed or revise decision"], ["preview reviewed"], ["user explicitly chooses the next action"], "Keep plan waiting for user decision.", True),
-        _step("step_5", "Generate final STL", "Generate final STL using the final profile and deterministic seed.", "generate_final", ["approved DesignSpecification", "final resolution"], ["final STL", "final validation report"], ["user approved final generation"], ["final artifact exists"], "Stop and keep error details in the observation record.", True),
+        _step("step_5", "Generate final STL", f"Generate the final mesh using the final profile and deterministic seed; export {export_label}.", "generate_final", ["approved DesignSpecification", "final resolution"], ["final STL", "final validation report"], ["user approved final generation"], ["final artifact exists"], "Stop and keep error details in the observation record.", True),
         _step("step_6", "Validate final STL", "Validate watertightness, nonmanifold edges, positive volume, mesh porosity, components, and pore percolation.", "validate_final", ["final STL", "final validation report"], ["accepted/warning/failed validation status"], ["final STL generated"], ["final validation is reviewed"], "Do not claim acceptance if validation fails.", False),
         _step("step_7", "Export HTML report", "Export a deterministic report summarizing inputs, artifacts, validation, and limitations.", "export_html_report", ["run directory"], ["HTML report"], ["final or preview run exists"], ["report path exists"], "Keep structured run data available if report export fails.", False),
         _step("step_8", "Archive or duplicate decision", "Ask the user whether to archive the run or duplicate the specification for another iteration.", None, ["completed run"], ["archive/duplicate/no-op decision"], ["report reviewed"], ["user chooses a follow-up"], "Leave run unchanged until user chooses.", True),
     ]
-    unsupported = _unsupported_notes(specification, parsed_request, is_tpms)
+    unsupported = _unsupported_notes(specification, parsed_request, family.uses_unit_cell)
     risks = [
         RiskItem(risk_id="risk_preview_resolution", severity="warning", description="Preview geometry is approximate and must not be treated as final validation.", mitigation="Use preview only for early review, then run final validation."),
         RiskItem(risk_id="risk_resource_limits", severity="warning", description="Fine final resolution may exceed local memory or runtime limits.", mitigation="Run estimate_resources before final generation."),
     ]
     assumptions = [
-        PlanAssumption(assumption_id="assumption_stl", description="STL is the executable export format for this phase.", requires_user_confirmation=False),
+        PlanAssumption(assumption_id="assumption_formats", description="STL and 3MF are written from the validated mesh; STEP is a faceted solid written only when the mesh can be reduced within tolerance.", requires_user_confirmation=False),
         PlanAssumption(assumption_id="assumption_user_triggered", description="Every deterministic execution step requires an explicit user action.", requires_user_confirmation=False),
     ]
-    if is_tpms:
-        risks.append(RiskItem(risk_id="risk_tpms_metrics", severity="info", description="TPMS pore diameter and throat metrics are unavailable in Phase 3B.2.", mitigation="Report these as unsupported rather than measured."))
+    if family.uses_unit_cell:
+        risks.append(RiskItem(risk_id="risk_tpms_metrics", severity="info", description="Pore diameter and throat metrics are not measured for unit-cell families.", mitigation="Report these as unsupported rather than measured."))
     if specification.domain.shape == DomainShape.CYLINDER:
         risks.append(RiskItem(risk_id="risk_cylinder_resolution", severity="warning", description="Cylinder boundaries are voxelized; dimensional accuracy depends on resolution.", mitigation="Review final validation and dimensional tolerance notes."))
         assumptions.append(PlanAssumption(assumption_id="assumption_cylinder_accuracy", description="Cylinder dimensional accuracy is bounded by selected voxel resolution.", requires_user_confirmation=False))
@@ -541,8 +542,6 @@ def validation_gates_from_report(plan: StrategyPlan, validation_report: dict[str
         )
     if not results:
         results.append(PlanValidationGateResult(gate_id=prefix, check_name="validation report", status="NOT_AVAILABLE"))
-    if any("STEP" in note.feature or "STP" in note.feature for note in plan.unsupported_requirements):
-        results.append(PlanValidationGateResult(gate_id="gate_unsupported", check_name="unsupported STEP acknowledged", status="PASS"))
     if any("wall" in note.feature.lower() for note in plan.unsupported_requirements):
         results.append(PlanValidationGateResult(gate_id="gate_unsupported", check_name="wall thickness not available", status="NOT_AVAILABLE"))
     if any("throat" in note.feature.lower() for note in plan.unsupported_requirements):
@@ -619,10 +618,8 @@ def _unsupported_notes(specification: DesignSpecification, parsed_request: Parse
     if parsed_request is not None:
         for item in parsed_request.unsupported_requests:
             notes.append(UnsupportedRequirementNote(feature=item.feature, source_text=item.source_text, explanation=item.explanation, retained_as_future_requirement=item.retained_as_future_requirement))
-    if ExportFormat.STEP in specification.export.formats or (parsed_request and any("step" in item.feature.lower() or "stp" in item.source_text.lower() for item in parsed_request.unsupported_requests)):
-        notes.append(UnsupportedRequirementNote(feature="STEP/STP export", explanation="STEP/STP generation is unsupported in Phase 3B.2; executable export remains STL."))
     if is_tpms:
-        notes.append(UnsupportedRequirementNote(feature="TPMS pore diameter and throat metrics", explanation="Pore diameter and throat-size metrics are not measured for TPMS structures in this phase."))
+        notes.append(UnsupportedRequirementNote(feature="Pore diameter and throat metrics", explanation="Pore diameter and throat-size metrics are not measured for TPMS, strut-lattice or foam structures in this phase."))
     if specification.targets.wall_target_mm is not None or specification.constraints.minimum_wall_thickness_mm is not None:
         notes.append(UnsupportedRequirementNote(feature="wall thickness measurement", explanation="Wall thickness is retained as a requirement but is not measured by Phase 3B.2 validation."))
     if specification.targets.throat_target_mm is not None or specification.constraints.minimum_throat_size_mm is not None:

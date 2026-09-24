@@ -225,14 +225,77 @@ def test_open_previous_run_and_duplicate(qtbot, tmp_path: Path):
     assert window.controller.specification.export.output_name == "open_previous"
 
 
-def test_error_dialog_and_step_disabled(qtbot):
+def test_error_dialog_and_export_formats(qtbot):
     dialog = ErrorDialog("SPEC_INVALID", "bad field", "details")
     qtbot.addWidget(dialog)
     assert "PGG Error" in dialog.windowTitle()
     window = MainWindow()
     qtbot.addWidget(window)
-    assert not window.generation_panel.step_disabled.isEnabled()
-    assert "STEP disabled" in window.generation_panel.step_disabled.text()
+    # Phase 4.1: 3MF and faceted STEP are selectable exports.
+    panel = window.generation_panel
+    assert panel.step_enabled.isEnabled() and panel.threemf_enabled.isEnabled()
+    panel.threemf_enabled.setChecked(True)
+    panel.step_enabled.setChecked(True)
+    window._collect_and_validate()
+    formats = {f.value for f in window.controller.specification.export.formats}
+    assert formats == {"stl", "3mf", "step"}
+    assert any(issue.field == "step_export" for issue in window.controller.spec_model.issues)
+
+
+def test_phase_4_1_structure_and_domain_controls(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    structure = window.structure_panel
+    structure.family.setCurrentText("Neovius")
+    assert structure.stack.currentIndex() == 1 and structure.variant.isEnabled()
+    structure.variant.setCurrentText("network")
+    assert not structure.wall_thickness.isEnabled()
+    structure.family.setCurrentText("Voronoi foam")
+    assert structure.randomness.isEnabled() and not structure.variant.isEnabled()
+    assert not structure.cell_grading.isEnabled()
+    structure.family.setCurrentText("Octet truss")
+    structure.cell_grading.setChecked(True)
+    structure.cell_start.setValue(1.5)
+    structure.cell_end.setValue(2.5)
+    window.domain_panel.shape.setCurrentText("sphere")
+    window.domain_panel.sphere_diameter.setValue(9.0)
+    window._collect_and_validate()
+    spec = window.controller.specification
+    assert spec.structure.family == StructureFamily.STRUT_OCTET
+    assert spec.structure.cell_size_grading.end == 2.5
+    assert spec.domain.shape == DomainShape.SPHERE and spec.domain.dimensions_mm == [9.0]
+
+    targets = window.targets_panel
+    structure.family.setCurrentText("Gyroid")
+    targets.graded.setChecked(True)
+    targets.grading_mode.setCurrentText("radial")
+    targets.grading_start.setValue(0.5)
+    targets.grading_end.setValue(0.8)
+    assert not targets.porosity.isEnabled() and not targets.grading_depth.isEnabled()
+    window._collect_and_validate()
+    grading = window.controller.specification.targets.porosity_grading
+    assert grading.mode.value == "radial" and (grading.start, grading.end) == (0.5, 0.8)
+
+    import trimesh
+
+    mesh_path = tmp_path / "domain.stl"
+    trimesh.creation.icosphere(subdivisions=2, radius=3.0).export(mesh_path)
+    domain = window.domain_panel
+    domain.shape.setCurrentText("mesh")
+    domain.mesh_path.setText(str(mesh_path))
+    domain._mesh_changed()
+    assert "mm" in domain.mesh_info.text()
+    domain.skin_thickness.setValue(0.4)
+    window._collect_and_validate()
+    spec = window.controller.specification
+    assert spec.domain.shape == DomainShape.MESH
+    assert spec.domain.skin_thickness_mm == 0.4
+    assert abs(spec.domain.dimensions_mm[0] - 6.0) < 0.1
+
+    # A spec loaded back into the panels round-trips.
+    window._apply_specification_to_panels(spec)
+    assert domain.shape.currentText() == "mesh" and structure.family.currentText() == "Gyroid"
+    assert targets.graded.isChecked()
 
 
 def test_rendering_presets_are_available_and_distinct():

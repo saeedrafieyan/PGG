@@ -27,6 +27,7 @@ cleanup:
   max_removed_solid_fraction: 0.00001
   max_removed_component_voxels: 7
   reject_boundary_touching: false
+  max_detached_fragment_fraction: 0.02
 resources:
   warning_memory_fraction: 0.50
   maximum_memory_fraction: 0.75

@@ -22,7 +22,7 @@ from porous_designer.agentic.contracts import (
     UnsupportedRequest,
     validate_field_value,
 )
-from porous_designer.agentic.terminology import DOMAIN_ALIASES, EXPORT_ALIASES, STRUCTURE_ALIASES, match_alias, normalize_text
+from porous_designer.agentic.terminology import DOMAIN_ALIASES, EXPORT_ALIASES, STRUCTURE_ALIASES, mask_pore_phrases, match_alias, normalize_text, tpms_variant_near
 from porous_designer.agentic.unit_normalization import LENGTH_UNIT_PATTERN, length_to_mm, porosity_to_fraction
 
 # A length unit that is not the prefix of a longer word ("m" in "microns").
@@ -31,7 +31,7 @@ from porous_designer.domain.enums import DomainShape, ExportFormat, StructureFam
 
 
 class DeterministicRequestParser:
-    parser_version = "3B.1"
+    parser_version = "4.1"
 
     def parse(self, request: str) -> ParsedRequestResult:
         if self._contains_prompt_injection(request):
@@ -72,13 +72,19 @@ class DeterministicRequestParser:
                 )
         else:
             cylinder = self._extract_cylinder_dimensions(text)
+            sphere = self._extract_sphere_diameter(mask_pore_phrases(text)) if cylinder is None else None
             if cylinder:
                 dims, phrase = cylinder
                 fields.append(self._field("domain.shape", DomainShape.CYLINDER.value, None, 0.95, phrase))
                 fields.append(self._field("domain.dimensions_mm", dims, "mm", 0.95, phrase))
                 evidence.append(self._evidence(phrase, "cylinder_dimensions", dims, 0.95))
+            elif sphere:
+                dims, phrase = sphere
+                fields.append(self._field("domain.shape", DomainShape.SPHERE.value, None, 0.95, phrase))
+                fields.append(self._field("domain.dimensions_mm", dims, "mm", 0.95, phrase))
+                evidence.append(self._evidence(phrase, "sphere_diameter", dims, 0.95))
 
-        domain_alias = match_alias(text, DOMAIN_ALIASES)
+        domain_alias = match_alias(mask_pore_phrases(text), DOMAIN_ALIASES)
         if domain_alias:
             phrase, shape = domain_alias
             fields.append(self._field("domain.shape", shape.value, None, score_explicit_alias(), phrase))
@@ -88,6 +94,9 @@ class DeterministicRequestParser:
             phrase, family = family_alias
             fields.append(self._field("structure.family", family.value, None, score_explicit_alias(), phrase))
             evidence.append(self._evidence(phrase, "structure_alias", family.value, 0.95))
+            variant = tpms_variant_near(text, phrase) if family.is_tpms else None
+            if variant:
+                fields.append(self._field("structure.tpms_variant", variant[1].value, None, score_explicit_alias(), variant[0]))
         elif "hexagonal" in text:
             fields.append(
                 self._field(
@@ -107,7 +116,7 @@ class DeterministicRequestParser:
             fields.append(self._field("structure.pore_diameter_mm", value, "mm", 0.92 if "generating" in phrase else 0.68, phrase, requires_confirmation="generating" not in phrase))
             evidence.append(self._evidence(phrase, "pore_size_length", value, 0.68))
 
-        unit_cell = self._extract_length_after(text, ("unit-cell size", "unit cell size", "unit-cell", "unit cell"))
+        unit_cell = self._extract_length_after(text, ("unit-cell size", "unit cell size", "unit-cell", "unit cell", "seed spacing", "cell spacing"))
         if unit_cell:
             value, phrase = unit_cell
             fields.append(self._field("structure.unit_cell_size_mm", value, "mm", 0.93, phrase))
@@ -151,11 +160,7 @@ class DeterministicRequestParser:
             if re.search(rf"\b{re.escape(alias)}\b", text):
                 formats.append(fmt.value)
         if formats:
-            normalized_formats = sorted(set(formats))
-            accepted_formats = [f for f in normalized_formats if f != ExportFormat.STEP.value]
-            if not accepted_formats:
-                accepted_formats = [ExportFormat.STL.value]
-            fields.append(self._field("export.formats", accepted_formats, None, 0.92, "requested output formats"))
+            fields.append(self._field("export.formats", sorted(set(formats)), None, 0.92, "requested output formats"))
 
         missing = self._missing_requirements(fields)
         valid_fields = []
@@ -221,10 +226,10 @@ class DeterministicRequestParser:
                 AmbiguityItem(
                     identifier="ambiguous_cell_size",
                     source_phrase="cell size",
-                    explanation="Cell size can mean TPMS unit-cell size, lattice spacing, or biological cell size.",
-                    candidate_interpretations=["TPMS unit-cell size", "lattice spacing", "biological cell size"],
-                    recommended_choice="TPMS unit-cell size",
-                    recommendation_rationale="Unit-cell size is the supported TPMS input when a TPMS family is selected.",
+                    explanation="Cell size can mean the lattice unit-cell size, lattice spacing, or biological cell size.",
+                    candidate_interpretations=["lattice unit-cell size", "lattice spacing", "biological cell size"],
+                    recommended_choice="lattice unit-cell size",
+                    recommendation_rationale="Unit-cell size is the supported input for TPMS, strut and Voronoi families.",
                     confidence=0.60,
                     mandatory=True,
                 )
@@ -255,32 +260,11 @@ class DeterministicRequestParser:
                     mandatory=True,
                 )
             )
-        if re.search(r"\b(step|stp)\b", text):
-            items.append(
-                AmbiguityItem(
-                    identifier="unsupported_step_request",
-                    source_phrase="STEP/STP",
-                    explanation="STEP/STP was requested but is not accepted production output in this phase.",
-                    candidate_interpretations=["retain as future requirement", "use STL only for current workflow"],
-                    recommended_choice="retain as future requirement",
-                    recommendation_rationale="STEP and STP are aliases for the STEP exchange format family, but STL remains the validated output.",
-                    confidence=0.99,
-                    mandatory=False,
-                )
-            )
         return items
 
     def detect_unsupported(self, request: str) -> list[UnsupportedRequest]:
         text = normalize_text(request)
         items: list[UnsupportedRequest] = []
-        if re.search(r"\b(step|stp)\b", text):
-            items.append(
-                UnsupportedRequest(
-                    feature="STEP export",
-                    source_text="STEP/STP",
-                    explanation="STEP and STP refer to the same STEP exchange format family; production STEP output remains unsupported in Phase 3B.1.",
-                )
-            )
         for phrase, feature in (("wall thickness", "wall thickness constraint"), ("throat", "throat-size constraint")):
             if phrase in text:
                 items.append(
@@ -353,8 +337,20 @@ class DeterministicRequestParser:
             return [porosity_to_fraction(float(value))], single.group(0)
         return None
 
+    def _extract_sphere_diameter(self, text: str) -> tuple[list[float], str] | None:
+        # "a 10 mm sphere", "sphere of 10 mm diameter", "spherical ... 10 mm diameter"
+        for pattern in (
+            re.compile(rf"(\d+(?:\.\d+)?)\s*{_UNIT}\s*(?:diameter\s+)?(?:sphere|spherical|ball|bead)\b"),
+            re.compile(rf"\b(?:sphere|spherical|ball|bead)\b[^.;]*?(\d+(?:\.\d+)?)\s*{_UNIT}\s*(?:in\s+)?diameter"),
+            re.compile(rf"\b(?:sphere|spherical|ball|bead)\b[^.;]*?diameter\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*{_UNIT}"),
+        ):
+            match = pattern.search(text)
+            if match:
+                return [length_to_mm(float(match.group(1)), match.group(2))], match.group(0)
+        return None
+
     def _has_domain_alias(self, text: str) -> bool:
-        return match_alias(text, DOMAIN_ALIASES) is not None
+        return match_alias(mask_pore_phrases(text), DOMAIN_ALIASES) is not None
 
     def _missing_requirements(self, fields: list[ExtractedField]) -> list[MissingRequirement]:
         paths = {field.field_path for field in fields}

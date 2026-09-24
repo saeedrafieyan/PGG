@@ -119,7 +119,7 @@ def _clear_irrelevant_structure_parameters(data: dict[str, Any]) -> str | None:
         data["structure"]["unit_cell_size_mm"] = None
         data["structure"]["tpms_level_set"] = None
         return "structure.pore_diameter_mm"
-    if family.is_tpms:
+    if family.uses_unit_cell:
         data["structure"]["pore_diameter_mm"] = None
         data["structure"]["lattice_spacing_mm"] = None
         return "structure.unit_cell_size_mm"

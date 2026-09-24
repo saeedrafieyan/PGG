@@ -58,7 +58,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
     print(f"Porous Structure Designer v{__version__} - generate ({profile.value})")
     print(f"  Run ID:              {result.run_id}")
     print(f"  Status:              {'PASSED' if result.success else 'FAILED'}")
-    print(f"  Lattice spacing:     {result.lattice_spacing_mm:.4f} mm")
+    print(f"  Family:              {spec.structure.family.value}  domain: {spec.domain.shape.value}")
+    print(f"  Control parameter:   {result.control_parameter_name} = {result.lattice_spacing_mm:.5f}")
     print(f"  Tuning-grid porosity:{result.tuning_grid_porosity * 100:.2f}%")
     print(f"  Final voxel porosity:{result.final_voxel_porosity * 100:.2f}%")
     print(f"  Final mesh porosity: {result.final_mesh_porosity * 100:.2f}%")
@@ -66,6 +67,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
     print(f"  Watertight:          {result.watertight}")
     print(f"  Solid components:    {result.solid_components}")
     print(f"  STL:                 {result.stl_path}")
+    if result.threemf_path:
+        print(f"  3MF:                 {result.threemf_path}")
+    for fmt, status in (result.export_status or {}).items():
+        if fmt != "stl":
+            print(f"  Export {fmt}:{' ' * max(1, 13 - len(fmt))}{status}")
+    if result.step_path:
+        print(f"  STEP:                {result.step_path}")
     if result.optimization:
         print(f"  Optimization:        {result.optimization.profile.value} ({result.optimization.reason})")
         print(f"  Recommended STL:     {result.optimization.recommended_path}")
@@ -309,6 +317,39 @@ def cmd_openrouter_models(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_families(args: argparse.Namespace) -> int:
+    """List every structure family with the parameter that defines it."""
+    from porous_designer.domain.enums import StructureFamily
+
+    groups = (
+        ("Sphere-pore lattices (pore_diameter_mm; porosity tuned by lattice spacing)", lambda f: f.is_sphere_lattice),
+        ("TPMS, sheet or network (unit_cell_size_mm; tpms_variant; porosity tuned by wall thickness/offset)", lambda f: f.is_tpms),
+        ("Strut lattices (unit_cell_size_mm; porosity tuned by strut diameter)", lambda f: f.is_strut_lattice),
+        ("Stochastic foam (unit_cell_size_mm = mean seed spacing; voronoi_randomness)", lambda f: f.is_stochastic),
+    )
+    for title, member in groups:
+        print(title)
+        for family in StructureFamily:
+            if member(family):
+                print(f"  {family.value}")
+    print("Domains: box [X,Y,Z], cylinder [diameter,height], sphere [diameter], mesh (closed STL/OBJ/PLY/3MF via domain.mesh_path)")
+    print("Exports: stl, 3mf, step (faceted solid)")
+    return 0
+
+
+def cmd_make_phantom(args: argparse.Namespace) -> int:
+    from porous_designer.geometry.phantoms import wound_cavity_phantom
+
+    mesh = wound_cavity_phantom(args.length, args.width, args.depth, irregularity=args.irregularity, seed=args.seed)
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    mesh.export(out)
+    ext = mesh.extents
+    print(f"Wound-cavity phantom written to {out}")
+    print(f"  extents {ext[0]:.2f} x {ext[1]:.2f} x {ext[2]:.2f} mm, volume {mesh.volume:.1f} mm3, watertight {mesh.is_watertight}, {len(mesh.faces)} triangles")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="porous-designer",
@@ -410,6 +451,18 @@ def main(argv: list[str] | None = None) -> int:
 
     p_models = sub.add_parser("openrouter-models", help="List free OpenRouter models that support strict structured output")
     p_models.set_defaults(func=cmd_openrouter_models)
+
+    p_fam = sub.add_parser("families", help="List structure families, domains, and export formats")
+    p_fam.set_defaults(func=cmd_families)
+
+    p_ph = sub.add_parser("make-phantom", help="Write a synthetic closed wound-cavity mesh for mesh-domain tests")
+    p_ph.add_argument("output", help="Output mesh path (.stl, .ply, .obj)")
+    p_ph.add_argument("--length", type=float, default=30.0, help="Wound length (mm)")
+    p_ph.add_argument("--width", type=float, default=18.0, help="Wound width (mm)")
+    p_ph.add_argument("--depth", type=float, default=6.0, help="Maximum depth (mm)")
+    p_ph.add_argument("--irregularity", type=float, default=0.15)
+    p_ph.add_argument("--seed", type=int, default=0)
+    p_ph.set_defaults(func=cmd_make_phantom)
 
     args = parser.parse_args(argv)
     configure_logging(level="DEBUG" if args.verbose else "INFO", json_output=args.json_log)

@@ -32,7 +32,8 @@ def test_resource_estimate_warns_and_rejects():
     )
     estimate = estimate_resources(spec, 0.05, available_mb=100.0)
     assert estimate.status.value == "infeasible"
-    assert estimate.voxel_count == 8_000_000
+    # Phase 4.1 grids include a one-voxel margin on each side: (200 + 2)^3.
+    assert estimate.voxel_count == 202**3
 
 
 def test_resource_estimate_safe_for_small_grid():

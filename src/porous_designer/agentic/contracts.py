@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from porous_designer.domain.enums import DomainShape, ExportFormat, StructureFamily
+from porous_designer.domain.enums import DomainShape, ExportFormat, StructureFamily, TPMSVariant
 
 
 class FieldSource(str, Enum):
@@ -76,6 +76,7 @@ ALLOWED_FIELD_PATHS = {
     "structure.family",
     "structure.pore_diameter_mm",
     "structure.unit_cell_size_mm",
+    "structure.tpms_variant",
     "targets.porosity_target.target",
     "targets.porosity_target.min_value",
     "targets.porosity_target.max_value",
@@ -274,6 +275,8 @@ def validate_field_value(field_path: str, value: Any) -> Any:
         return DomainShape(value).value
     if field_path == "structure.family":
         return StructureFamily(value).value
+    if field_path == "structure.tpms_variant":
+        return TPMSVariant(value).value
     if field_path == "export.formats":
         return [ExportFormat(v).value for v in value]
     if field_path in {

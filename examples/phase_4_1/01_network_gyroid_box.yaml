@@ -1,0 +1,18 @@
+# Network (skeletal) gyroid in a 10 x 10 x 5 mm box, 70 % porosity, STL + 3MF.
+source_text: "Phase 4.1 example: network gyroid box"
+domain:
+  shape: box
+  dimensions_mm: [10.0, 10.0, 5.0]
+structure:
+  family: gyroid
+  tpms_variant: network
+  unit_cell_size_mm: 2.5
+targets:
+  porosity_target: {target: 0.70, tolerance: 0.02}
+generation:
+  preview_resolution_mm: 0.15
+  final_resolution_mm: 0.06
+export:
+  formats: [stl, 3mf]
+  output_directory: runs/phase_4_1
+  output_name: network_gyroid_box

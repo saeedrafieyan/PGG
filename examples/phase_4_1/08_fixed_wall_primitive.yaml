@@ -1,0 +1,18 @@
+# Fixed geometry: Schwarz-P sheet with a 0.35 mm wall; porosity is reported, not tuned.
+source_text: "Phase 4.1 example: fixed wall thickness"
+domain:
+  shape: box
+  dimensions_mm: [8.0, 8.0, 8.0]
+structure:
+  family: primitive
+  unit_cell_size_mm: 2.5
+  wall_thickness_mm: 0.35
+targets:
+  porosity_target: {target: 0.80, tolerance: 0.05}
+generation:
+  preview_resolution_mm: 0.15
+  final_resolution_mm: 0.06
+export:
+  formats: [stl]
+  output_directory: runs/phase_4_1
+  output_name: fixed_wall_primitive

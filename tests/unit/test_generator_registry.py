@@ -23,5 +23,6 @@ def test_tpms_generator_uses_tpms_terms():
     description = generator.describe_parameters()
     names = {p["name"] for p in description["parameters"]}
     assert "unit_cell_size_mm" in names
-    assert "tpms_level_set" in names
+    assert {"tpms_variant", "wall_thickness_mm", "network_offset_mm"} <= names
     assert "pore_diameter_mm" not in names
+    assert description["supported_exports"] == ["stl", "3mf", "step"]

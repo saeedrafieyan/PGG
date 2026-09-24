@@ -1,0 +1,23 @@
+# Fill a (synthetic) wound cavity with a gyroid; create the phantom first:
+#   porous-designer make-phantom examples/phase_4_1/wound_phantom.stl
+# The part keeps the phantom's coordinates, so it overlays the "scan".
+source_text: "Phase 4.1 example: wound phantom fill"
+domain:
+  shape: mesh
+  mesh_path: wound_phantom.stl   # relative to this file
+  mesh_units: mm
+  skin_thickness_mm: 0.4         # thin closed skin around the fill
+structure:
+  family: gyroid
+  unit_cell_size_mm: 2.0
+targets:
+  porosity_target: {target: 0.75, tolerance: 0.02}
+constraints:
+  require_open_pores: false      # a skin on every side encloses the pores
+generation:
+  preview_resolution_mm: 0.25
+  final_resolution_mm: 0.12
+export:
+  formats: [stl, 3mf]
+  output_directory: runs/phase_4_1
+  output_name: wound_phantom_fill

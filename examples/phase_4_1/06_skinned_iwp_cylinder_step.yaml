@@ -1,0 +1,20 @@
+# I-WP sheet in a 8 x 6 mm cylinder with a 0.5 mm solid side wall (ends open), STL + 3MF + STEP.
+source_text: "Phase 4.1 example: skinned I-WP with STEP"
+domain:
+  shape: cylinder
+  dimensions_mm: [8.0, 6.0]
+  skin_thickness_mm: 0.5
+  skin_mode: lateral          # solid side wall; pores stay open at top and bottom
+structure:
+  family: iwp
+  unit_cell_size_mm: 3.0
+targets:
+  porosity_target: {target: 0.70, tolerance: 0.02}
+generation:
+  preview_resolution_mm: 0.2
+  final_resolution_mm: 0.1
+  step_max_triangles: 20000
+export:
+  formats: [stl, 3mf, step]
+  output_directory: runs/phase_4_1
+  output_name: skinned_iwp_cylinder

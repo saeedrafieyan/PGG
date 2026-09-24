@@ -27,17 +27,15 @@ def test_federica_legacy_spec_load():
     assert ExportFormat.STEP in spec.export.formats
 
 
-def test_gyroid_rejects_step_export():
-    with pytest.raises(ValidationError, match="STEP export is not supported"):
-        DesignSpecification(
-            domain=DomainSpec(shape=DomainShape.BOX, dimensions_mm=[10, 10, 10]),
-            structure=StructureSpec(
-                family=StructureFamily.GYROID,
-                unit_cell_size_mm=2.0,
-            ),
-            targets=TargetsSpec(porosity_target=PorosityTarget(target=0.5)),
-            export=ExportSpec(formats=[ExportFormat.STL, ExportFormat.STEP]),
-        )
+def test_gyroid_accepts_step_export():
+    # Phase 4.1: every family can be exported as a faceted STEP solid.
+    spec = DesignSpecification(
+        domain=DomainSpec(shape=DomainShape.BOX, dimensions_mm=[10, 10, 10]),
+        structure=StructureSpec(family=StructureFamily.GYROID, unit_cell_size_mm=2.0),
+        targets=TargetsSpec(porosity_target=PorosityTarget(target=0.5)),
+        export=ExportSpec(formats=[ExportFormat.STL, ExportFormat.STEP]),
+    )
+    assert ExportFormat.STEP in spec.export.formats
 
 
 def test_cylinder_domain_requires_two_dimensions():

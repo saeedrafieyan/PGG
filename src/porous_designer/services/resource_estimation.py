@@ -65,11 +65,16 @@ def estimate_resources(
     maximum_memory_fraction: float = 0.75,
     available_mb: float | None = None,
 ) -> ResourceEstimate:
-    shape = voxel_counts(domain_bounds(spec.domain), resolution_mm)
+    from porous_designer.implicit.domain_sdf import GridGeometry
+
+    shape = GridGeometry.covering(tuple(domain_bounds(spec.domain)), resolution_mm).shape
     voxel_count = int(shape[0] * shape[1] * shape[2])
-    base = voxel_count / (1024 * 1024)  # boolean grid, 1 byte per voxel
-    temporary = base * 6.0  # coordinate slices, masks, labels, working fields
-    marching = base * 240.0  # conservative marching-cubes mesh amplification
+    mb = voxel_count / (1024 * 1024)
+    # Persistent float32 fields: domain distance, lattice distance, final
+    # field (+ cell size when graded), plus boolean solid/inside masks.
+    base = mb * (4.0 * 3 + 2.0 + (4.0 if spec.structure.cell_size_grading or spec.targets.porosity_grading else 0.0))
+    temporary = mb * 16.0  # evaluation slabs, labels, working copies
+    marching = mb * 240.0  # conservative marching-cubes mesh amplification
     peak = base + temporary + marching
     available = available_mb if available_mb is not None else available_memory_mb()
     fraction = peak / available if available else None

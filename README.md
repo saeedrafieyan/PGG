@@ -50,6 +50,27 @@ launch_pgg_gui.bat --debug-gui
 Legacy scripts are preserved for comparison, but new development should use the
 `porous_designer` package.
 
+## Phase 4.1: structures, domains, formats
+
+- **16 families**: sphere pores (SC, BCC, FCC, HCP); sheet or network TPMS
+  (gyroid, diamond, primitive, I-WP, Neovius, Fischer-Koch S, Lidinoid); strut
+  lattices (cubic, BCC, octet, Kelvin); stochastic Voronoi foam.
+- **Domains**: box, cylinder, sphere, or any closed mesh file (STL/OBJ/PLY/3MF,
+  with units); optional solid skin on all boundaries or the side wall only.
+- **Grading**: porosity (linear, radial, from the surface) and unit-cell size.
+- **Exports**: STL, 3MF (millimetres, for slicers), faceted STEP (for CAD).
+- The exported mesh is tuned to hit the porosity target; CUDA is used for
+  large grids when available.
+
+```powershell
+porous-designer families
+porous-designer generate examples\phase_4_1\02_octet_sphere.yaml --yaml
+porous-designer make-phantom examples\phase_4_1\wound_phantom.stl
+porous-designer generate examples\phase_4_1\07_wound_phantom_fill.yaml --yaml
+```
+
+See `docs/phase_4_1_report.md` and the example specs in `examples/phase_4_1/`.
+
 ## Agent-Assisted Requests
 
 The GUI has separate `Manual Design` and `Agentic Design` modes. Manual Design
@@ -115,27 +136,31 @@ output:       sample
 
 ## How It Works
 
-1. Pore centers or implicit TPMS fields are generated inside a box or cylinder.
-2. Porosity tuning bisects the generator control parameter.
-3. The solid voxel field is triangulated with marching cubes.
+1. The structure is a continuous signed field (TPMS, strut, Voronoi, or sphere
+   pores) composed with the domain's signed distance and an optional skin.
+2. Porosity tuning bisects the control parameter (wall thickness, strut
+   diameter, network offset, or lattice spacing) on a coarse grid, refines it
+   on the final grid, and corrects it so the exported mesh meets the target.
+3. The continuous field is triangulated with marching cubes (smooth surfaces).
 4. Validation records topology, porosity, connectivity, cleanup, resources, and
    provenance.
-5. STL artifacts and reports are written under `runs/<run_id>/`.
+5. STL/3MF/STEP artifacts and reports are written under `runs/<run_id>/`.
 
 ## Notes And Limits
 
 - Preview meshes are not final validation artifacts.
-- STEP is disabled in the package pipeline until the Phase 0 negative-volume
-  failure is resolved.
-- Wall thickness and throat size are shown as unsupported in the Phase 3A GUI.
+- STEP is a faceted solid, written for Final runs when the part can be reduced
+  to `generation.step_max_triangles` within tolerance; the STEP is re-imported
+  and its volume checked. Large lattices skip STEP; use 3MF or STL.
+- Wall-thickness and throat-size minima are recorded but not yet measured.
 - Large final STLs are not loaded automatically by the GUI.
 - Preview rendering presets are display-only and do not alter exported STL
   geometry or validation metrics.
 - Renderer and OpenGL details are available from the GUI `Diagnostics` action;
   the normal preview panel shows only a compact preview/final status row.
 - FEA, inverse design, cloud deployment, autonomous multi-step execution,
-  bounded repair, STEP generation, material optimization, and arbitrary CAD code
-  generation are not part of Phase 3B.3.
+  scan-to-domain processing, material optimization, and arbitrary CAD code
+  generation are not part of Phase 4.1.
 
 ## Example
 

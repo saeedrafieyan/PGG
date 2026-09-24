@@ -39,12 +39,15 @@ from porous_designer.agentic.terminology import (
     EXPORT_ALIASES,
     PROCESS_ALIASES,
     STRUCTURE_ALIASES,
+    TPMS_VARIANT_ALIASES,
+    mask_pore_phrases,
     normalize_text,
+    tpms_variant_near,
 )
 from porous_designer.agentic.unit_normalization import length_to_mm
-from porous_designer.domain.enums import DomainShape, ExportFormat, StructureFamily
+from porous_designer.domain.enums import DomainShape, ExportFormat, StructureFamily, TPMSVariant
 
-GROUNDED_PARSER_VERSION = "4.0.1-grounded"
+GROUNDED_PARSER_VERSION = "4.1.0-grounded"
 SCHEMA_NAME = "AGEGroundedExtraction"
 
 LENGTH_UNIT_CODES = ("mm", "cm", "m", "um")
@@ -102,11 +105,16 @@ def _choice(values: tuple[str, ...], description: str) -> dict[str, Any]:
     return _obj({"value": _nullable_enum(values, "Allowed value, or null if not stated."), "quote": _QUOTE}, description)
 
 
+# Shapes a request can describe in words; mesh domains come from a file.
+TEXT_DOMAIN_SHAPES = (DomainShape.BOX.value, DomainShape.CYLINDER.value, DomainShape.SPHERE.value)
+EXPORTABLE_FORMATS = (ExportFormat.STL.value, ExportFormat.THREE_MF.value, ExportFormat.STEP.value)
+
+
 def grounded_extraction_schema() -> dict[str, Any]:
     families = tuple(f.value for f in StructureFamily)
     return _obj(
         {
-            "domain_shape": _choice(tuple(s.value for s in DomainShape), "Overall part shape, only if the request names it."),
+            "domain_shape": _choice(TEXT_DOMAIN_SHAPES, "Overall part shape, only if the request names it. Imported mesh domains cannot be described in text."),
             "box_dimensions": _obj(
                 {
                     "values": {"type": "array", "items": {"type": "number"}, "description": "The three box edge lengths exactly as written, or an empty list."},
@@ -117,7 +125,9 @@ def grounded_extraction_schema() -> dict[str, Any]:
             ),
             "cylinder_diameter": _length("Diameter of a cylindrical part."),
             "cylinder_height": _length("Height of a cylindrical part."),
+            "sphere_diameter": _length("Diameter of a spherical part."),
             "structure_family": _choice(families, "Porous structure family. Only choose a value the request names or unambiguously describes."),
+            "tpms_variant": _choice(tuple(v.value for v in TPMSVariant), "sheet (thin walls around the minimal surface) or network (solid on one side), only if the request says so."),
             "pore_size": _length("Pore size or pore diameter as stated."),
             "unit_cell_size": _length("Unit-cell size / cell size / period."),
             "porosity": _obj(
@@ -141,7 +151,7 @@ def grounded_extraction_schema() -> dict[str, Any]:
             "final_resolution": _length("Final / manufacturing voxel resolution."),
             "export_formats": _obj(
                 {
-                    "values": {"type": "array", "items": {"type": "string", "enum": ["stl", "step"]}, "description": "Requested file formats, or an empty list."},
+                    "values": {"type": "array", "items": {"type": "string", "enum": list(EXPORTABLE_FORMATS)}, "description": "Requested file formats, or an empty list."},
                     "quote": _QUOTE,
                 },
                 "Requested output file formats.",
@@ -235,7 +245,9 @@ class GroundedExtraction(_Lenient):
     box_dimensions: BoxDimensions = Field(default_factory=BoxDimensions)
     cylinder_diameter: LengthValue = Field(default_factory=LengthValue)
     cylinder_height: LengthValue = Field(default_factory=LengthValue)
+    sphere_diameter: LengthValue = Field(default_factory=LengthValue)
     structure_family: Choice = Field(default_factory=Choice)
+    tpms_variant: Choice = Field(default_factory=Choice)
     pore_size: LengthValue = Field(default_factory=LengthValue)
     unit_cell_size: LengthValue = Field(default_factory=LengthValue)
     porosity: PorosityValue = Field(default_factory=PorosityValue)
@@ -407,7 +419,7 @@ class _Verifier:
             return None
         return length_to_mm(item.value, _UNIT_CODE_TO_PARSER_UNIT[item.unit])
 
-    def choice(self, path: str, item: Choice, aliases: dict[str, Any], allowed: set[str]) -> None:
+    def choice(self, path: str, item: Choice, aliases: dict[str, Any], allowed: set[str], *, mask=None) -> None:
         if item.value is None:
             return
         value = item.value.strip().lower()
@@ -417,7 +429,7 @@ class _Verifier:
         if not self.grounded_quote(path, value, item.quote):
             return
         assert item.quote is not None
-        named = _alias_values(item.quote, aliases)
+        named = _alias_values(mask(item.quote) if mask else item.quote, aliases)
         if value in named:
             # Several different names in one quote ("gyroid or diamond") are
             # a choice the user must make, not a verified value.
@@ -430,7 +442,11 @@ class _Verifier:
     # -- sections -------------------------------------------------------------
     def verify(self, extraction: GroundedExtraction) -> GroundingReport:
         self._domain(extraction)
+        family_before = len(self.report.fields)
         self.choice("structure.family", extraction.structure_family, STRUCTURE_ALIASES, {f.value for f in StructureFamily})
+        family = next((f.value for f in self.report.fields[family_before:] if f.field_path == "structure.family"), None)
+        if extraction.tpms_variant.value is not None and (family is None or StructureFamily(family).is_tpms):
+            self._tpms_variant(extraction.tpms_variant, family)
         for path, item in (
             ("structure.pore_diameter_mm", extraction.pore_size),
             ("structure.unit_cell_size_mm", extraction.unit_cell_size),
@@ -469,6 +485,7 @@ class _Verifier:
                     self.reject(path, box.values, box.quote, "lengths must be positive")
                 else:
                     box_dims = [length_to_mm(v, _UNIT_CODE_TO_PARSER_UNIT[box.unit]) for v in box.values]
+        sphere = self.length_mm("domain.dimensions_mm", extraction.sphere_diameter)
         diameter = self.length_mm("domain.dimensions_mm", extraction.cylinder_diameter)
         height = self.length_mm("domain.dimensions_mm", extraction.cylinder_height)
         cylinder_dims = [diameter, height] if diameter is not None and height is not None else None
@@ -479,11 +496,21 @@ class _Verifier:
                 self.reject("domain.dimensions_mm", [diameter, height], None, "a cylinder needs both diameter and height")
 
         shape_before = len(self.report.fields)
-        self.choice("domain.shape", extraction.domain_shape, DOMAIN_ALIASES, {s.value for s in DomainShape})
+        self.choice("domain.shape", extraction.domain_shape, DOMAIN_ALIASES, set(TEXT_DOMAIN_SHAPES), mask=mask_pore_phrases)
         stated_shape = next((f.value for f in self.report.fields[shape_before:] if f.field_path == "domain.shape"), None)
 
-        if box_dims is not None and cylinder_dims is not None:
-            self.reject("domain.dimensions_mm", {"box": box_dims, "cylinder": cylinder_dims}, box.quote, "both box and cylinder sizes were proposed")
+        proposed = {name: dims for name, dims in (("box", box_dims), ("cylinder", cylinder_dims), ("sphere", [sphere] if sphere is not None else None)) if dims is not None}
+        if len(proposed) > 1:
+            self.reject("domain.dimensions_mm", proposed, box.quote or extraction.cylinder_diameter.quote or extraction.sphere_diameter.quote, f"sizes for several shapes were proposed ({', '.join(proposed)})")
+            return
+        if sphere is not None:
+            if stated_shape not in (None, DomainShape.SPHERE.value):
+                self.reject("domain.dimensions_mm", [sphere], extraction.sphere_diameter.quote, f"a sphere diameter conflicts with the stated shape {stated_shape!r}")
+                return
+            quote = extraction.sphere_diameter.quote or ""
+            self.accept("domain.dimensions_mm", [sphere], quote, unit="mm")
+            if stated_shape is None:
+                self.accept("domain.shape", DomainShape.SPHERE.value, quote)
             return
         if box_dims is not None:
             if stated_shape not in (None, DomainShape.BOX.value):
@@ -503,6 +530,26 @@ class _Verifier:
             self.accept("domain.dimensions_mm", cylinder_dims, quote, unit="mm")
             if stated_shape is None:
                 self.accept("domain.shape", DomainShape.CYLINDER.value, quote)
+
+    def _tpms_variant(self, item: Choice, family: str | None) -> None:
+        path = "structure.tpms_variant"
+        value = (item.value or "").strip().lower()
+        if value not in {v.value for v in TPMSVariant}:
+            self.reject(path, item.value, item.quote, "the value is not one of the allowed options")
+            return
+        if not self.grounded_quote(path, value, item.quote):
+            return
+        assert item.quote is not None
+        quote_norm = normalize_for_matching(item.quote)
+        phrases = [alias for alias, fam in STRUCTURE_ALIASES.items() if fam.is_tpms and (family is None or fam.value == family) and re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", quote_norm)]
+        near = next((hit for hit in (tpms_variant_near(item.quote, phrase) for phrase in phrases or ["tpms"]) if hit is not None), None)
+        if near is not None and near[1].value == value:
+            self.accept(path, value, item.quote)
+        elif near is not None:
+            self.reject(path, value, item.quote, f"the quoted words say {near[1].value!r}, not {value!r}")
+        else:
+            # e.g. "pore network": plausible but not a stated variant.
+            self.accept(path, value, item.quote, interpreted=True)
 
     def _porosity(self, item: PorosityValue) -> None:
         if item.kind is None and item.value is None and item.min is None and item.max is None:
@@ -578,11 +625,7 @@ class _Verifier:
         missing = sorted({v.lower() for v in item.values} - set(verified))
         if missing:
             self.reject(path, missing, item.quote, "the format is not named in the quoted words")
-        if ExportFormat.STEP.value in verified:
-            self.report.unsupported.append(
-                UnsupportedRequest(feature="STEP export", source_text=_clean_quote(item.quote), explanation="STEP export is not available yet; STL is produced instead.")
-            )
-        accepted = [v for v in verified if v != ExportFormat.STEP.value] or ([ExportFormat.STL.value] if verified else [])
+        accepted = [v for v in verified if v in EXPORTABLE_FORMATS]
         if accepted:
             self.accept(path, accepted, item.quote)
 

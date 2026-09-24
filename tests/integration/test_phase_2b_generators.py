@@ -24,7 +24,8 @@ def _spec(family, domain, *, pore=None, unit=None, target=0.6, tol=0.15):
         ),
         targets=TargetsSpec(porosity_target=PorosityTarget(target=target, tolerance=tol)),
         constraints=ConstraintsSpec(require_open_pores=False),
-        generation=GenerationSpec(preview_resolution_mm=0.2, final_resolution_mm=0.2),
+        # 0.1 mm: 65% diamond sheets at a 2 mm cell are ~0.15 mm thick, below one 0.2 mm voxel.
+        generation=GenerationSpec(preview_resolution_mm=0.2, final_resolution_mm=0.1),
         export=ExportSpec(output_directory="runs/_test_phase_2b", output_name=family.value),
     )
 

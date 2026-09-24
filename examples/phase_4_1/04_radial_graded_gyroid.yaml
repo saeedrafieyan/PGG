@@ -1,0 +1,18 @@
+# Gyroid cylinder with radially graded porosity: 85 % at the centre -> 55 % at the rim.
+source_text: "Phase 4.1 example: radially graded gyroid"
+domain:
+  shape: cylinder
+  dimensions_mm: [10.0, 6.0]
+structure:
+  family: gyroid
+  unit_cell_size_mm: 2.0
+targets:
+  porosity_target: {target: 0.70, tolerance: 0.02}   # replaced by the grading mean
+  porosity_grading: {mode: radial, axis: z, start: 0.85, end: 0.55}
+generation:
+  preview_resolution_mm: 0.15
+  final_resolution_mm: 0.06
+export:
+  formats: [stl, 3mf]
+  output_directory: runs/phase_4_1
+  output_name: radial_graded_gyroid

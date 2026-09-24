@@ -8,6 +8,8 @@ class DomainShape(str, Enum):
 
     BOX = "box"
     CYLINDER = "cylinder"
+    SPHERE = "sphere"
+    MESH = "mesh"
 
 
 class OriginConvention(str, Enum):
@@ -20,15 +22,26 @@ class OriginConvention(str, Enum):
 class StructureFamily(str, Enum):
     """Supported porous structure families."""
 
-    # Sphere-pore lattices
+    # Sphere-pore lattices (solid block with spherical pores)
     SC_SPHERICAL_PORES = "sc_spherical_pores"
     BCC_SPHERICAL_PORES = "bcc_spherical_pores"
     FCC_SPHERICAL_PORES = "fcc_spherical_pores"
     HCP_SPHERICAL_PORES = "hcp_spherical_pores"
-    # TPMS structures
+    # Triply periodic minimal surfaces (sheet or network variant)
     GYROID = "gyroid"
     DIAMOND = "diamond"
     PRIMITIVE = "primitive"
+    IWP = "iwp"
+    NEOVIUS = "neovius"
+    FISCHER_KOCH_S = "fischer_koch_s"
+    LIDINOID = "lidinoid"
+    # Strut (beam) lattices
+    STRUT_CUBIC = "strut_cubic"
+    STRUT_BCC = "strut_bcc"
+    STRUT_OCTET = "strut_octet"
+    STRUT_KELVIN = "strut_kelvin"
+    # Stochastic open-cell foam
+    VORONOI_FOAM = "voronoi_foam"
 
     @property
     def is_sphere_lattice(self) -> bool:
@@ -45,12 +58,34 @@ class StructureFamily(str, Enum):
             StructureFamily.GYROID,
             StructureFamily.DIAMOND,
             StructureFamily.PRIMITIVE,
+            StructureFamily.IWP,
+            StructureFamily.NEOVIUS,
+            StructureFamily.FISCHER_KOCH_S,
+            StructureFamily.LIDINOID,
         }
 
     @property
+    def is_strut_lattice(self) -> bool:
+        return self in {
+            StructureFamily.STRUT_CUBIC,
+            StructureFamily.STRUT_BCC,
+            StructureFamily.STRUT_OCTET,
+            StructureFamily.STRUT_KELVIN,
+        }
+
+    @property
+    def is_stochastic(self) -> bool:
+        return self == StructureFamily.VORONOI_FOAM
+
+    @property
+    def uses_unit_cell(self) -> bool:
+        """Families sized by a unit-cell (or mean cell) size rather than a pore diameter."""
+        return not self.is_sphere_lattice
+
+    @property
     def supports_step(self) -> bool:
-        """STEP export is reliable only for sphere-pore lattices."""
-        return self.is_sphere_lattice
+        """Faceted STEP is produced best-effort for every family (size-limited)."""
+        return True
 
     @property
     def legacy_lattice_key(self) -> str | None:
@@ -65,9 +100,28 @@ class StructureFamily(str, Enum):
         return mapping.get(self)
 
 
+class TPMSVariant(str, Enum):
+    """Sheet: solid shell of given thickness around the surface. Network: solid on one side."""
+
+    SHEET = "sheet"
+    NETWORK = "network"
+
+
+class GradingMode(str, Enum):
+    LINEAR = "linear"
+    RADIAL = "radial"
+    SURFACE_DISTANCE = "surface_distance"
+
+
+class SkinMode(str, Enum):
+    ALL = "all"
+    LATERAL = "lateral"
+
+
 class ExportFormat(str, Enum):
     STL = "stl"
     STEP = "step"
+    THREE_MF = "3mf"
     NPZ = "npz"
     YAML = "yaml"
     JSON = "json"

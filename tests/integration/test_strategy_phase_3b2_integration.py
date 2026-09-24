@@ -46,7 +46,8 @@ def test_federica_request_to_approved_spec_to_strategy_plan(tmp_path):
     )
     plan = deterministic_strategy_plan(approved, specification_revision=1, parsed_request=orchestrator.last_result)
     assert approved.structure.family == StructureFamily.HCP_SPHERICAL_PORES
-    assert any("STEP" in note.feature for note in plan.unsupported_requirements)
+    # Phase 4.1: STEP is written by generate_final, not by a separate tool.
+    assert not any("STEP" in note.feature for note in plan.unsupported_requirements)
     assert not any(step.deterministic_tool == "generate_step" for step in plan.steps)
 
 

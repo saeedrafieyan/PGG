@@ -1,0 +1,19 @@
+# Stochastic Voronoi foam (bone-like) in a 10 mm x 8 mm cylinder, 75 % porosity.
+source_text: "Phase 4.1 example: Voronoi foam cylinder"
+domain:
+  shape: cylinder
+  dimensions_mm: [10.0, 8.0]
+structure:
+  family: voronoi_foam
+  unit_cell_size_mm: 1.6      # mean seed (cell) spacing
+  voronoi_randomness: 1.0
+targets:
+  porosity_target: {target: 0.75, tolerance: 0.02}
+generation:
+  preview_resolution_mm: 0.15
+  final_resolution_mm: 0.06
+  deterministic_seed: 42      # same seed -> identical foam
+export:
+  formats: [stl, 3mf]
+  output_directory: runs/phase_4_1
+  output_name: voronoi_cylinder

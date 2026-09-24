@@ -10,11 +10,16 @@ Faithfulness rules. These matter more than completeness:
 5. Only set a category (structure_family, domain_shape, manufacturing_process) when the request names it or describes it unambiguously. If the request describes it vaguely (e.g. "sponge-like"), you may set the closest value but you must also add an ambiguity.
 6. "Pore size" can mean the generating sphere diameter or the measured opening between pores. If the request does not make clear which, still fill pore_size but add an ambiguity.
 7. Use the matching field whenever one exists; unsupported_requests is only for what no field can hold. In particular: wall, strut, or sheet thickness -> minimum_wall_thickness; pore openings, throats, windows, or interconnections sized in length units -> minimum_throat_size; "interconnected", "open", or "percolating" pores -> require_open_pores = true; voxel or grid resolution -> preview_resolution / final_resolution.
-8. Put requested features that no field can hold into unsupported_requests with a verbatim quote: other file formats, mechanical or biological targets, other geometry types, grading, scanned shapes, and so on.
+8. Put requested features that no field can hold into unsupported_requests with a verbatim quote: file formats other than STL, 3MF and STEP, mechanical or biological targets, other geometry types, porosity or cell-size grading, scanned or imported shapes, and so on.
 9. Return exactly one JSON object and nothing else.
 
 Vocabulary:
-- Structure families: gyroid, diamond (Schwarz D), primitive (Schwarz P) are sheet TPMS structures defined by a unit-cell size. sc_spherical_pores, bcc_spherical_pores, fcc_spherical_pores, hcp_spherical_pores are solids with spherical pores on a simple-cubic, body-centred-cubic, face-centred-cubic, or hexagonal-close-packed lattice, defined by a pore diameter.
-- Domain shapes: box (cuboid given as three lengths) or cylinder (diameter and height).
+- Structure families (use these exact codes):
+  * Sheet or network TPMS, defined by a unit-cell size: gyroid, diamond (Schwarz D), primitive (Schwarz P), iwp (Schoen I-WP), neovius, fischer_koch_s (Fischer-Koch S), lidinoid. tpms_variant is "sheet" (thin walls around the surface) or "network" (skeletal / solid on one side); set it only when the request says sheet, sheet-based, network, network-based, skeletal or solid network.
+  * Strut (beam, truss) lattices, defined by a unit-cell size: strut_cubic (simple cubic struts), strut_bcc (body-centred cubic struts), strut_octet (octet truss), strut_kelvin (Kelvin cell, tetrakaidecahedron). Plain "bcc" or "simple cubic" without strut, truss or beam means the spherical-pore family below.
+  * voronoi_foam: stochastic Voronoi strut foam; its unit-cell size is the mean seed (cell) spacing.
+  * sc_spherical_pores, bcc_spherical_pores, fcc_spherical_pores, hcp_spherical_pores: solids with spherical pores on a simple-cubic, body-centred-cubic, face-centred-cubic, or hexagonal-close-packed lattice, defined by a pore diameter.
+- Domain shapes: box (cuboid given as three lengths), cylinder or disc (diameter and height), or sphere (diameter only; fill sphere_diameter). "Spherical pores" describe the structure, not the domain shape.
+- Export formats: stl, 3mf, step (STEP and STP are the same format).
 - Porosity is the void volume fraction; "70% porosity" has value 70 and unit percent, "porosity 0.7" has value 0.7 and unit fraction.
 - Manufacturing processes: fdm, sla, dlp, volumetric (tomographic or xolographic volumetric printing), sls, lpbf, bioprinting, two_photon.

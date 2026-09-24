@@ -24,7 +24,9 @@ def test_federica_request_parse_result(tmp_path):
     assert "domain.dimensions_mm" in paths
     assert "structure.family" in paths
     assert any(item.identifier == "ambiguous_hexagonal" for item in result.ambiguities)
-    assert any(item.feature == "STEP export" for item in result.unsupported_requests)
+    # Phase 4.1: STEP is a supported export, so it is extracted, not flagged.
+    assert not any(item.feature == "STEP export" for item in result.unsupported_requests)
+    assert "step" in next(f.value for f in result.extracted_fields if f.field_path == "export.formats")
 
 
 def test_explicit_hcp_request_can_be_approved(tmp_path):
@@ -62,11 +64,11 @@ def test_ambiguous_hexagonal_and_pore_size_requests(tmp_path):
     assert {"ambiguous_hexagonal", "ambiguous_pore_size"} <= ids
 
 
-def test_unsupported_step_request(tmp_path):
+def test_step_only_request_is_extracted(tmp_path):
     orchestrator = AgenticRequestOrchestrator(audit_root=tmp_path)
     result = orchestrator.parse_request("Create a 4 x 4 x 4 mm HCP scaffold with STEP-only output.", default_specification())
-    assert any(item.feature == "STEP export" for item in result.unsupported_requests)
-    assert all("step" not in item.value for item in result.extracted_fields if item.field_path == "export.formats")
+    assert not any(item.feature == "STEP export" for item in result.unsupported_requests)
+    assert [item.value for item in result.extracted_fields if item.field_path == "export.formats"] == [["step"]]
 
 
 def test_infeasible_request_still_parses_for_later_deterministic_estimate(tmp_path):

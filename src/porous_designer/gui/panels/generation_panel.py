@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
 
 class GenerationPanel(QWidget):
@@ -43,16 +43,27 @@ class GenerationPanel(QWidget):
         self.maximum_runtime.setSuffix(" s")
         self.stl_enabled = QCheckBox("STL")
         self.stl_enabled.setChecked(True)
-        self.step_disabled = QCheckBox("STEP disabled: unsafe until later phase")
-        self.step_disabled.setEnabled(False)
+        self.threemf_enabled = QCheckBox("3MF (millimetre units, preferred by slicers)")
+        self.step_enabled = QCheckBox("STEP (faceted solid for CAD)")
+        self.step_enabled.setToolTip("Written only when the mesh can be reduced to the STEP triangle limit within 0.05 mm; otherwise skipped with a note.")
+        self.step_max_triangles = QSpinBox()
+        self.step_max_triangles.setRange(1000, 200000)
+        self.step_max_triangles.setSingleStep(5000)
+        self.step_max_triangles.setValue(20000)
+        self.compute_backend = QComboBox()
+        self.compute_backend.addItems(["auto", "cpu", "cuda"])
+        self.compute_backend.setToolTip("auto uses the GPU (PyTorch CUDA) for large grids when available.")
         form.addRow("Profile", self.profile)
         form.addRow("Preview resolution", self.preview_resolution)
         form.addRow("Final resolution", self.final_resolution)
         form.addRow("Reference resolution", self.reference_resolution)
         form.addRow("Memory limit", self.maximum_memory)
         form.addRow("Runtime limit", self.maximum_runtime)
+        form.addRow("Compute", self.compute_backend)
         form.addRow("Export", self.stl_enabled)
-        form.addRow("Unsupported", self.step_disabled)
+        form.addRow("", self.threemf_enabled)
+        form.addRow("", self.step_enabled)
+        form.addRow("STEP triangle limit", self.step_max_triangles)
         layout.addLayout(form)
         self.status_label = QLabel("Preview only, not final validation")
         layout.addWidget(self.status_label)
@@ -69,9 +80,11 @@ class GenerationPanel(QWidget):
         self.preview_button.clicked.connect(self.preview_requested)
         self.final_button.clicked.connect(self.final_requested)
         self.cancel_button.clicked.connect(self.cancel_requested)
-        for widget in (self.profile, self.preview_resolution, self.final_resolution, self.reference_resolution, self.maximum_memory, self.maximum_runtime):
+        for widget in (self.profile, self.preview_resolution, self.final_resolution, self.reference_resolution, self.maximum_memory, self.maximum_runtime, self.compute_backend, self.step_max_triangles):
             signal = widget.currentTextChanged if isinstance(widget, QComboBox) else widget.valueChanged
             signal.connect(self.changed)
+        for check in (self.stl_enabled, self.threemf_enabled, self.step_enabled):
+            check.toggled.connect(self.changed)
 
     def set_generation_enabled(self, enabled: bool, final_allowed: bool = True) -> None:
         self.preview_button.setEnabled(enabled)
@@ -86,6 +99,10 @@ class GenerationPanel(QWidget):
             self.maximum_memory,
             self.maximum_runtime,
             self.stl_enabled,
+            self.threemf_enabled,
+            self.step_enabled,
+            self.step_max_triangles,
+            self.compute_backend,
         ):
             widget.setEnabled(enabled)
 
@@ -111,4 +128,20 @@ class GenerationPanel(QWidget):
             "reference_resolution": self.reference_resolution.value(),
             "maximum_memory_gb": self.maximum_memory.value(),
             "maximum_runtime_s": self.maximum_runtime.value(),
+            "compute_backend": self.compute_backend.currentText(),
+            "step_max_triangles": self.step_max_triangles.value(),
+            "export_formats": [fmt for fmt, check in (("stl", self.stl_enabled), ("3mf", self.threemf_enabled), ("step", self.step_enabled)) if check.isChecked()],
         }
+
+    def load(self, generation, export) -> None:
+        self.preview_resolution.setValue(generation.preview_resolution_mm)
+        self.final_resolution.setValue(generation.final_resolution_mm)
+        self.reference_resolution.setValue(generation.reference_resolution_mm)
+        self.maximum_memory.setValue(generation.maximum_memory_gb)
+        self.maximum_runtime.setValue(generation.maximum_runtime_s)
+        self.compute_backend.setCurrentText(generation.compute_backend)
+        self.step_max_triangles.setValue(generation.step_max_triangles)
+        formats = {f.value for f in export.formats}
+        self.stl_enabled.setChecked("stl" in formats)
+        self.threemf_enabled.setChecked("3mf" in formats)
+        self.step_enabled.setChecked("step" in formats)

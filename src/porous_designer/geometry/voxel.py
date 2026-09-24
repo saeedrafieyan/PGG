@@ -204,3 +204,42 @@ def remove_small_solid_components(
         True,
     )
     return cleaned, report
+
+
+@dataclass
+class FragmentReport:
+    component_count_before: int
+    removed_component_count: int
+    removed_voxel_count: int
+    removed_solid_fraction: float
+    accepted: bool
+    reason: str = ""
+
+
+def remove_detached_fragments(
+    solid_grid: np.ndarray,
+    *,
+    max_removed_solid_fraction: float = 0.02,
+) -> tuple[np.ndarray, FragmentReport]:
+    """Keep the largest solid body; drop detached pieces if they are small.
+
+    Cutting a lattice with the domain boundary can leave pieces that touch
+    nothing else. They would print as loose debris, so they are removed when
+    their total volume is at most ``max_removed_solid_fraction`` of the solid.
+    Larger detached volume means the design itself is disconnected; the grid
+    is then returned unchanged and the report is not accepted.
+    """
+    structure = np.ones((3, 3, 3), dtype=int)
+    labels, count = ndimage.label(solid_grid, structure=structure)
+    if count <= 1:
+        return solid_grid, FragmentReport(int(count), 0, 0, 0.0, True)
+    sizes = np.bincount(labels.ravel())
+    sizes[0] = 0
+    keep = int(np.argmax(sizes))
+    total = int(sizes.sum())
+    removed_voxels = total - int(sizes[keep])
+    fraction = removed_voxels / max(total, 1)
+    if fraction > max_removed_solid_fraction:
+        return solid_grid, FragmentReport(int(count), 0, 0, float(fraction), False, f"detached solid is {fraction:.1%} of the material (limit {max_removed_solid_fraction:.1%})")
+    cleaned = labels == keep
+    return cleaned, FragmentReport(int(count), int(count - 1), int(removed_voxels), float(fraction), True)

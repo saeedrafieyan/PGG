@@ -197,10 +197,11 @@ def test_disallowed_enum_value_is_rejected():
     assert not report.fields
 
 
-def test_step_is_recorded_as_unsupported_and_stl_kept():
-    report = verify("export as STL and STEP", export_formats={"values": ["stl", "step"], "quote": "STL and STEP"})
-    assert accepted(report)["export.formats"].value == ["stl"]
-    assert any(u.feature == "STEP export" for u in report.unsupported)
+def test_step_and_3mf_are_accepted_formats():
+    # Phase 4.1: STEP (faceted) and 3MF are supported exports.
+    report = verify("export as STL, 3MF and STEP", export_formats={"values": ["stl", "3mf", "step"], "quote": "STL, 3MF and STEP"})
+    assert accepted(report)["export.formats"].value == ["3mf", "step", "stl"]
+    assert not report.unsupported
 
 
 def test_unsupported_and_ambiguities_need_real_quotes():
