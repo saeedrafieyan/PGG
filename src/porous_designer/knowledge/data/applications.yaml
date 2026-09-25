@@ -1,0 +1,54 @@
+# Application presets used by the design agent. Every value carries its source.
+# confidence: established (widely replicated), indicative (order of magnitude),
+# heuristic (design practice, no single source). The agent shows these as
+# assumptions on the review card; user-stated values always win.
+references:
+  hulbert1970: "Hulbert SF, Young FA, Mathews RS, Klawitter JJ, Talbert CD, Stelling FH. Potential of ceramic materials as permanently implantable skeletal prostheses. J Biomed Mater Res 1970;4(3):433-456."
+  karageorgiou2005: "Karageorgiou V, Kaplan D. Porosity of 3D biomaterial scaffolds and osteogenesis. Biomaterials 2005;26(27):5474-5491."
+  murphy2010: "Murphy CM, Haugh MG, O'Brien FJ. The effect of mean pore size on cell attachment, proliferation and migration in collagen-glycosaminoglycan scaffolds for bone tissue engineering. Biomaterials 2010;31(3):461-466."
+  yannas1989: "Yannas IV, Lee E, Orgill DP, Skrabut EM, Murphy GF. Synthesis and characterization of a model extracellular matrix that induces partial regeneration of adult mammalian skin. Proc Natl Acad Sci USA 1989;86(3):933-937."
+  gibson_ashby1997: "Gibson LJ, Ashby MF. Cellular Solids: Structure and Properties. 2nd ed. Cambridge University Press; 1997."
+  deshpande2001: "Deshpande VS, Ashby MF, Fleck NA. Foam topology: bending versus stretching dominated architectures. Acta Mater 2001;49(6):1035-1040."
+  rumpler2008: "Rumpler M, Woesz A, Dunlop JWC, van Dongen JT, Fratzl P. The effect of geometry on three-dimensional tissue growth. J R Soc Interface 2008;5(27):1173-1180."
+  gibson1985: "Gibson LJ. The mechanical behaviour of cancellous bone. J Biomech 1985;18(5):317-328."
+
+applications:
+  bone:
+    label: bone scaffold (cancellous / trabecular bone substitute)
+    aliases: [bone, bone scaffold, bone graft, bone defect, trabecular, cancellous, osteogenic, osteo, orthopedic, orthopaedic, osseous]
+    porosity: {range: [0.5, 0.9], typical: 0.7, source: karageorgiou2005, confidence: established,
+               note: "Trabecular bone is 50-90 % porous; scaffolds are usually designed in this range."}
+    pore_size_mm: {minimum: 0.1, range: [0.3, 0.8], typical: 0.5, source: [hulbert1970, karageorgiou2005], confidence: established,
+                   note: "About 100 um is the minimum for bone ingrowth (Hulbert 1970); pores above 300 um are recommended for new bone and capillaries (Karageorgiou & Kaplan 2005)."}
+    open_pores: {value: true, source: karageorgiou2005, confidence: established, note: "Interconnected pores are needed for cell migration, vascularisation and nutrient transport."}
+    stiffness: {note: "Match the host bone: cancellous bone modulus varies over orders of magnitude with density and site (Gibson 1985).", source: gibson1985, confidence: established}
+    curvature: {note: "Tissue grows faster on concave surfaces (Rumpler et al. 2008); TPMS offer saddle-shaped surfaces with continuous curvature.", source: rumpler2008, confidence: established}
+    preferred_families: [gyroid, diamond, primitive, strut_kelvin, voronoi_foam]
+  collagen_bone_culture:
+    label: soft (collagen-like) bone tissue-engineering scaffold
+    aliases: [collagen scaffold, collagen-gag]
+    pore_size_mm: {typical: 0.325, source: murphy2010, confidence: established, note: "Mean pore size around 325 um gave the best cell attachment and migration in collagen-GAG scaffolds."}
+    open_pores: {value: true, source: murphy2010, confidence: established}
+  skin:
+    label: dermal / wound-healing scaffold
+    aliases: [skin, dermal, dermis, wound, wound healing, wound dressing, wound filling, dermal substitute]
+    pore_size_mm: {range: [0.02, 0.125], typical: 0.08, source: yannas1989, confidence: established,
+                   note: "Collagen-GAG dermal regeneration templates were active with mean pores of 20-125 um (Yannas et al. 1989); such small pores are below the resolution of most printers."}
+    porosity: {range: [0.85, 0.98], typical: 0.9, source: yannas1989, confidence: indicative, note: "Dermal regeneration templates are highly porous."}
+    open_pores: {value: true, source: yannas1989, confidence: established}
+    preferred_processes: [dlp, sla, volumetric, bioprinting]
+    preferred_families: [gyroid, voronoi_foam]
+
+design_rules:
+  gibson_ashby:
+    statement: "Relative modulus scales as E*/Es = C (rho*/rho_s)^n: n ~ 2 for bending-dominated architectures (foams, most TPMS sheets, BCC struts), n ~ 1 for stretching-dominated ones (octet truss)."
+    source: [gibson_ashby1997, deshpande2001]
+    confidence: established
+  stiff_for_porosity:
+    statement: "For a given porosity, stretching-dominated lattices (octet) and TPMS sheets are stiffer than bending-dominated struts and foams."
+    source: [deshpande2001]
+    confidence: established
+  self_supporting:
+    statement: "Minimal surfaces have non-positive Gaussian curvature, so their height function has no local minima: TPMS sheets print without internal supports on layer-based printers."
+    source: []
+    confidence: heuristic

@@ -110,16 +110,30 @@ class DeterministicRequestParser:
                 )
             )
 
-        pore = self._extract_length_after(text, ("generating sphere diameter", "sphere diameter", "pore diameter", "pore size", "pore sizes", "pores"))
+        pore = self._extract_length_after(text, ("generating sphere diameter", "sphere diameter", "pore diameter", "pore size", "pore sizes", "pores"), exclude_prefixes=("spherical ",))
         if pore:
             value, phrase = pore
             fields.append(self._field("structure.pore_diameter_mm", value, "mm", 0.92 if "generating" in phrase else 0.68, phrase, requires_confirmation="generating" not in phrase))
             evidence.append(self._evidence(phrase, "pore_size_length", value, 0.68))
 
-        unit_cell = self._extract_length_after(text, ("unit-cell size", "unit cell size", "unit-cell", "unit cell", "seed spacing", "cell spacing"))
+        unit_cell = self._extract_length_after(text, ("unit-cell size", "unit cell size", "unit-cell", "unit cell", "seed spacing", "cell spacing", "cell size", "cells of", "lattice cell", "period"))
         if unit_cell:
             value, phrase = unit_cell
             fields.append(self._field("structure.unit_cell_size_mm", value, "mm", 0.93, phrase))
+
+        wall = self._extract_length_after(
+            text,
+            ("minimum wall thickness", "min wall thickness", "minimum strut thickness", "minimum strut diameter", "wall thickness", "strut thickness", "strut diameter", "walls of at least", "walls at least"),
+        )
+        if wall:
+            # "Wall thickness 0.3 mm" is read as a minimum; confirm because it may be meant as a fixed value.
+            fields.append(self._field("constraints.minimum_wall_thickness_mm", wall[0], "mm", 0.85, wall[1], requires_confirmation="minimum" not in wall[1] and "least" not in wall[1]))
+        throat = self._extract_length_after(
+            text,
+            ("minimum throat size", "minimum throat diameter", "min throat size", "throat size", "throat diameter", "throats of at least", "pore openings of at least", "pore opening", "interconnection size"),
+        )
+        if throat:
+            fields.append(self._field("constraints.minimum_throat_size_mm", throat[0], "mm", 0.85, throat[1], requires_confirmation="minimum" not in throat[1] and "least" not in throat[1]))
 
         porosity = self._extract_porosity(text)
         if porosity:
@@ -263,18 +277,8 @@ class DeterministicRequestParser:
         return items
 
     def detect_unsupported(self, request: str) -> list[UnsupportedRequest]:
-        text = normalize_text(request)
-        items: list[UnsupportedRequest] = []
-        for phrase, feature in (("wall thickness", "wall thickness constraint"), ("throat", "throat-size constraint")):
-            if phrase in text:
-                items.append(
-                    UnsupportedRequest(
-                        feature=feature,
-                        source_text=phrase,
-                        explanation="Wall and throat constraints can be recorded but are not accepted final validators in this phase.",
-                    )
-                )
-        return items
+        # Wall thickness and throat size are measured validators since Phase 4.2.
+        return []
 
     def _field(self, field_path: str, value: Any, unit: str | None, confidence: float, source_text: str, *, source: FieldSource = FieldSource.DETERMINISTIC, requires_confirmation: bool = False) -> ExtractedField:
         return ExtractedField(
@@ -296,17 +300,34 @@ class DeterministicRequestParser:
         )
         match = pattern.search(text)
         if not match:
+            # "a 12 mm cube", "cube of 12 mm", "12 mm cubic part", "cube with 12 mm sides"
+            for cube in (
+                re.compile(rf"(\d+(?:\.\d+)?)\s*{_UNIT}\s*(?:-\s*)?(?:sided\s+)?(?:cube|cubic (?:part|block|sample|specimen|scaffold))\b"),
+                re.compile(rf"\bcube\b\s*(?:of|with)?\s*(?:side|sides|edge|edges)?\s*(?:length\s*)?(?:of\s*)?(\d+(?:\.\d+)?)\s*{_UNIT}"),
+            ):
+                m = cube.search(text)
+                if m:
+                    side = length_to_mm(float(m.group(1)), m.group(2))
+                    return [side, side, side], m.group(0)
             return None
         unit = match.group(4)
         dims = [length_to_mm(float(match.group(i)), unit) for i in (1, 2, 3)]
         return dims, match.group(0)
 
     def _extract_cylinder_dimensions(self, text: str) -> tuple[list[float], str] | None:
-        pattern = re.compile(rf"(\d+(?:\.\d+)?)\s*{_UNIT}\s*diameter.*?(\d+(?:\.\d+)?)\s*{_UNIT}\s*(?:high|height|tall)")
+        pattern = re.compile(rf"(\d+(?:\.\d+)?)\s*{_UNIT}\s*(?:in\s+)?diameter.*?(\d+(?:\.\d+)?)\s*{_UNIT}\s*(?:high|height|tall|long|thick)")
         match = pattern.search(text)
-        if not match:
+        if match:
+            return [length_to_mm(float(match.group(1)), match.group(2)), length_to_mm(float(match.group(3)), match.group(4))], match.group(0)
+        if not re.search(r"\b(?:cylinder|cylindrical|disc|disk|rod|plug)\b", text):
             return None
-        return [length_to_mm(float(match.group(1)), match.group(2)), length_to_mm(float(match.group(3)), match.group(4))], match.group(0)
+        # "diameter (of) 8 mm and (a) height (of) 4 mm", in either order
+        dia = re.search(rf"diameter\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*{_UNIT}", text)
+        hei = re.search(rf"(?:height|length|thickness)\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*{_UNIT}", text) or re.search(rf"(\d+(?:\.\d+)?)\s*{_UNIT}\s*(?:high|tall|long|thick)\b", text)
+        if dia and hei:
+            lo, hi = min(dia.start(), hei.start()), max(dia.end(), hei.end())
+            return [length_to_mm(float(dia.group(1)), dia.group(2)), length_to_mm(float(hei.group(1)), hei.group(2))], text[lo:hi]
+        return None
 
     def _extract_length_after(self, text: str, labels: tuple[str, ...], *, exclude_prefixes: tuple[str, ...] = ()) -> tuple[float, str] | None:
         for label in labels:
@@ -314,7 +335,10 @@ class DeterministicRequestParser:
             # specific one such as "preview resolution".
             guard = "".join(rf"(?<!{re.escape(prefix)})" for prefix in exclude_prefixes)
             label_re = rf"(?<![a-z]){guard}{re.escape(label)}(?![a-z])"
-            pattern = re.compile(rf"{label_re}\D{{0,24}}(\d+(?:\.\d+)?)\s*{_UNIT}")
+            # The value must belong to this label: "pores of 600 um", not "pores, walls of at least 1 mm"
+            # (the text is normalised, so the gap may not run into another quantity's keyword).
+            gap = r"(?:(?!walls?\b|struts?\b|cell|throat|opening|resolution|porosity|porous|thick|high|tall|long|wide|diameter|sphere|cylinder|cube|box)[^\d]){0,24}"
+            pattern = re.compile(rf"{label_re}{gap}(\d+(?:\.\d+)?)\s*{_UNIT}")
             match = pattern.search(text)
             if match:
                 phrase = match.group(0)
@@ -327,11 +351,15 @@ class DeterministicRequestParser:
         return None
 
     def _extract_porosity(self, text: str) -> tuple[list[float], str] | None:
-        range_match = re.search(r"(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*%\s*porosity|porosity\D{0,16}(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*%", text)
+        sep = r"\s*(?:-|–|to|and)\s*"
+        range_match = re.search(
+            rf"(\d+(?:\.\d+)?)\s*%?{sep}(\d+(?:\.\d+)?)\s*%\s*(?:porosity|porous)|porosity\D{{0,24}}?(\d+(?:\.\d+)?)\s*%?{sep}(\d+(?:\.\d+)?)\s*%",
+            text,
+        )
         if range_match:
             groups = [g for g in range_match.groups() if g is not None]
             return [porosity_to_fraction(float(groups[0])), porosity_to_fraction(float(groups[1]))], range_match.group(0)
-        single = re.search(r"(\d+(?:\.\d+)?)\s*%\s*porosity|porosity\D{0,16}(\d+(?:\.\d+)?)\s*%", text)
+        single = re.search(r"(\d+(?:\.\d+)?)\s*%\s*(?:porosity|porous|pore volume|void)|porosity\D{0,16}(\d+(?:\.\d+)?)\s*%", text)
         if single:
             value = next(g for g in single.groups() if g is not None)
             return [porosity_to_fraction(float(value))], single.group(0)
