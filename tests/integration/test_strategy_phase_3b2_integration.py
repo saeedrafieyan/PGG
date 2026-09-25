@@ -58,7 +58,8 @@ def test_gyroid_request_to_approved_spec_to_strategy_plan(tmp_path):
     )
     plan = deterministic_strategy_plan(approved, specification_revision=1, parsed_request=orchestrator.last_result)
     assert approved.structure.family == StructureFamily.GYROID
-    assert any("TPMS" in note.explanation for note in plan.unsupported_requirements)
+    # Phase 4.2: TPMS wall and throat sizes are measured, so no unsupported notes remain.
+    assert not any("TPMS" in note.explanation for note in plan.unsupported_requirements)
 
 
 def test_plan_observation_after_estimate(tmp_path):

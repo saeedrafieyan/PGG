@@ -1,0 +1,14 @@
+id: generic_sls
+process: sls
+display_name: Generic polymer SLS (PA12)
+source: Generic values; replace with calibration-coupon results.
+layer_height_mm: 0.1
+xy_resolution_mm: 0.4
+min_wall_mm: 0.7
+recommended_wall_mm: 1.0
+min_hole_mm: 1.5
+min_gap_mm: 0.5
+min_drain_throat_mm: 1.0   # loose powder must be removed from the pores
+max_overhang_deg: null     # the powder bed supports the part
+build_volume_mm: [300, 300, 300]
+traps_material: true

@@ -16,6 +16,7 @@ from porous_designer.domain.specification import (
     ExportSpec,
     GenerationSpec,
     GradingSpec,
+    ManufacturingSpec,
     PorosityTarget,
     StructureSpec,
     TargetsSpec,
@@ -125,7 +126,14 @@ class SpecificationModel(QObject):
                     maximum_memory_gb=float(data["maximum_memory_gb"]),
                     maximum_runtime_s=float(data["maximum_runtime_s"]),
                     compute_backend=data.get("compute_backend") or "auto",
+                    metrology=data.get("metrology") or "basic",
                     step_max_triangles=int(data.get("step_max_triangles") or 20000),
+                ),
+                manufacturing=ManufacturingSpec(
+                    process=data.get("process") or "unknown",
+                    printer_profile=data.get("printer_profile") or "",
+                    enforce_printability=bool(data.get("enforce_printability", False)),
+                    minimum_printable_feature_mm=float(data.get("minimum_printable_feature_mm") or 0.4),
                 ),
                 export=ExportSpec(
                     output_directory=resolve_output_directory(data["output_directory"]),
@@ -173,8 +181,4 @@ class SpecificationModel(QObject):
             )
         if spec.domain.skin_thickness_mm and spec.domain.skin_mode == SkinMode.ALL and spec.constraints.require_open_pores:
             issues.append(FieldIssue("skin", "warning", "A skin on every boundary closes all pores; open-pore validation will fail. Use a lateral skin or untick 'Require pore percolation'."))
-        if spec.constraints.minimum_wall_thickness_mm:
-            issues.append(FieldIssue("minimum_wall_thickness", "unsupported", "Wall-thickness validation is not yet available."))
-        if spec.constraints.minimum_throat_size_mm:
-            issues.append(FieldIssue("minimum_throat_size", "unsupported", "Throat-size validation is not yet available."))
         return issues

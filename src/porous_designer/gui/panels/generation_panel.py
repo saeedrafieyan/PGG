@@ -53,6 +53,9 @@ class GenerationPanel(QWidget):
         self.compute_backend = QComboBox()
         self.compute_backend.addItems(["auto", "cpu", "cuda"])
         self.compute_backend.setToolTip("auto uses the GPU (PyTorch CUDA) for large grids when available.")
+        self.metrology = QComboBox()
+        self.metrology.addItems(["basic", "full", "none"])
+        self.metrology.setToolTip("After Final runs - basic: pore/wall/throat sizes, closed pores, drainage, tortuosity, surface, curvature; full: also permeability and stiffness (GPU recommended).")
         form.addRow("Profile", self.profile)
         form.addRow("Preview resolution", self.preview_resolution)
         form.addRow("Final resolution", self.final_resolution)
@@ -60,6 +63,7 @@ class GenerationPanel(QWidget):
         form.addRow("Memory limit", self.maximum_memory)
         form.addRow("Runtime limit", self.maximum_runtime)
         form.addRow("Compute", self.compute_backend)
+        form.addRow("Measurements", self.metrology)
         form.addRow("Export", self.stl_enabled)
         form.addRow("", self.threemf_enabled)
         form.addRow("", self.step_enabled)
@@ -80,7 +84,7 @@ class GenerationPanel(QWidget):
         self.preview_button.clicked.connect(self.preview_requested)
         self.final_button.clicked.connect(self.final_requested)
         self.cancel_button.clicked.connect(self.cancel_requested)
-        for widget in (self.profile, self.preview_resolution, self.final_resolution, self.reference_resolution, self.maximum_memory, self.maximum_runtime, self.compute_backend, self.step_max_triangles):
+        for widget in (self.profile, self.preview_resolution, self.final_resolution, self.reference_resolution, self.maximum_memory, self.maximum_runtime, self.compute_backend, self.metrology, self.step_max_triangles):
             signal = widget.currentTextChanged if isinstance(widget, QComboBox) else widget.valueChanged
             signal.connect(self.changed)
         for check in (self.stl_enabled, self.threemf_enabled, self.step_enabled):
@@ -103,6 +107,7 @@ class GenerationPanel(QWidget):
             self.step_enabled,
             self.step_max_triangles,
             self.compute_backend,
+            self.metrology,
         ):
             widget.setEnabled(enabled)
 
@@ -129,6 +134,7 @@ class GenerationPanel(QWidget):
             "maximum_memory_gb": self.maximum_memory.value(),
             "maximum_runtime_s": self.maximum_runtime.value(),
             "compute_backend": self.compute_backend.currentText(),
+            "metrology": self.metrology.currentText(),
             "step_max_triangles": self.step_max_triangles.value(),
             "export_formats": [fmt for fmt, check in (("stl", self.stl_enabled), ("3mf", self.threemf_enabled), ("step", self.step_enabled)) if check.isChecked()],
         }
@@ -140,6 +146,7 @@ class GenerationPanel(QWidget):
         self.maximum_memory.setValue(generation.maximum_memory_gb)
         self.maximum_runtime.setValue(generation.maximum_runtime_s)
         self.compute_backend.setCurrentText(generation.compute_backend)
+        self.metrology.setCurrentText(generation.metrology)
         self.step_max_triangles.setValue(generation.step_max_triangles)
         formats = {f.value for f in export.formats}
         self.stl_enabled.setChecked("stl" in formats)

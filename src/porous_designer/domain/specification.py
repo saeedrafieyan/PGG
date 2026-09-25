@@ -281,6 +281,7 @@ class ManufacturingSpec(BaseModel):
     minimum_printable_feature_mm: float = Field(default=0.4, gt=0)
     preferred_orientation: str = Field(default="z_up")
     support_policy: str = Field(default="auto")
+    enforce_printability: bool = Field(default=False, description="Fail the run (instead of warning) when a printability rule is violated.")
 
 
 class GenerationSpec(BaseModel):
@@ -292,6 +293,10 @@ class GenerationSpec(BaseModel):
     deterministic_seed: int = Field(default=42)
     compute_backend: Literal["auto", "cpu", "cuda"] = Field(default="auto", description="Field evaluation device; auto uses CUDA for large grids when available.")
     step_max_triangles: int = Field(default=20000, ge=1000, description="Faceted STEP is attempted only up to this many triangles (after decimation).")
+    metrology: Literal["none", "basic", "full"] = Field(
+        default="basic",
+        description="Measurements after Final runs: basic = pore/wall/throat sizes, closed pores, drainage, tortuosity, surface, curvature; full adds permeability and stiffness.",
+    )
 
 
 class ExportSpec(BaseModel):

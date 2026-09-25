@@ -1,0 +1,17 @@
+id: generic_volumetric_tomographic
+process: volumetric
+display_name: Generic tomographic volumetric printer (rotating vial)
+source: Generic values for tomographic volumetric additive manufacturing; vial size and resolution vary strongly between systems - calibrate.
+layer_height_mm: null      # no layers
+xy_resolution_mm: 0.08
+min_wall_mm: 0.1
+recommended_wall_mm: 0.2
+min_hole_mm: 0.3
+min_gap_mm: 0.25
+min_drain_throat_mm: 0.3   # uncured resin must wash out of every void
+max_overhang_deg: null     # overhangs are irrelevant (the part floats in viscous resin)
+vial_diameter_mm: 15.0
+vial_height_mm: 30.0
+stray_dose_pore_mm: 0.3    # smaller pores inside thick parts collect scattered dose
+stray_dose_thickness_mm: 3.0
+traps_material: true

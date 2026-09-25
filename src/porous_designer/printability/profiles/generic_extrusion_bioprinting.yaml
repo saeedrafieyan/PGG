@@ -1,0 +1,15 @@
+id: generic_extrusion_bioprinting
+process: bioprinting
+display_name: Generic extrusion bioprinter, 25G nozzle
+source: Generic values for hydrogel extrusion; strand width depends on ink and pressure - calibrate.
+layer_height_mm: 0.2
+xy_resolution_mm: 0.3
+nozzle_diameter_mm: 0.25
+line_width_mm: 0.3
+min_wall_mm: 0.3
+recommended_wall_mm: 0.6
+min_hole_mm: 0.3
+min_gap_mm: 0.3
+max_overhang_deg: 20       # soft hydrogels barely bridge
+build_volume_mm: [100, 100, 50]
+traps_material: false

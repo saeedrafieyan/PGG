@@ -78,10 +78,13 @@ def test_federica_deterministic_repeat(federica_spec):
         shutil.rmtree(out_base)
     out_base.mkdir(parents=True)
     federica_spec.export.output_directory = str(out_base)
+    # Determinism of the geometry; the measurements are covered by the Phase 4.2 tests.
+    federica_spec.generation.metrology = "none"
 
     r1 = generate_sphere_lattice_stl(federica_spec, profile=GenerationProfile.FINAL)
     federica_spec2 = DesignSpecification.from_yaml_file(FIXTURES / "federica_regression.yaml")
     federica_spec2.export.output_directory = str(out_base)
+    federica_spec2.generation.metrology = "none"
     r2 = generate_sphere_lattice_stl(federica_spec2, profile=GenerationProfile.FINAL)
 
     assert r1.lattice_spacing_mm == pytest.approx(r2.lattice_spacing_mm, rel=1e-6)
@@ -102,5 +105,6 @@ def test_preview_faster_than_final(federica_spec):
     prev = generate_sphere_lattice_stl(federica_spec, profile=GenerationProfile.PREVIEW)
     spec2 = DesignSpecification.from_yaml_file(FIXTURES / "federica_regression.yaml")
     spec2.export.output_directory = str(out_base)
+    spec2.generation.metrology = "none"
     final = generate_sphere_lattice_stl(spec2, profile=GenerationProfile.FINAL)
     assert prev.triangle_count < final.triangle_count

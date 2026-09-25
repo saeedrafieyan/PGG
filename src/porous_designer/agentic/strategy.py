@@ -253,7 +253,7 @@ def deterministic_strategy_plan(
         PlanAssumption(assumption_id="assumption_user_triggered", description="Every deterministic execution step requires an explicit user action.", requires_user_confirmation=False),
     ]
     if family.uses_unit_cell:
-        risks.append(RiskItem(risk_id="risk_tpms_metrics", severity="info", description="Pore diameter and throat metrics are not measured for unit-cell families.", mitigation="Report these as unsupported rather than measured."))
+        risks.append(RiskItem(risk_id="risk_measurement_resolution", severity="info", description="Pore, wall and throat sizes are measured on voxels (about half a voxel of uncertainty).", mitigation="Periodic-cell sizes are measured at high resolution; refine the final resolution for small features."))
     if specification.domain.shape == DomainShape.CYLINDER:
         risks.append(RiskItem(risk_id="risk_cylinder_resolution", severity="warning", description="Cylinder boundaries are voxelized; dimensional accuracy depends on resolution.", mitigation="Review final validation and dimensional tolerance notes."))
         assumptions.append(PlanAssumption(assumption_id="assumption_cylinder_accuracy", description="Cylinder dimensional accuracy is bounded by selected voxel resolution.", requires_user_confirmation=False))
@@ -542,10 +542,6 @@ def validation_gates_from_report(plan: StrategyPlan, validation_report: dict[str
         )
     if not results:
         results.append(PlanValidationGateResult(gate_id=prefix, check_name="validation report", status="NOT_AVAILABLE"))
-    if any("wall" in note.feature.lower() for note in plan.unsupported_requirements):
-        results.append(PlanValidationGateResult(gate_id="gate_unsupported", check_name="wall thickness not available", status="NOT_AVAILABLE"))
-    if any("throat" in note.feature.lower() for note in plan.unsupported_requirements):
-        results.append(PlanValidationGateResult(gate_id="gate_unsupported", check_name="throat size not available", status="NOT_AVAILABLE"))
     return results
 
 
@@ -618,12 +614,10 @@ def _unsupported_notes(specification: DesignSpecification, parsed_request: Parse
     if parsed_request is not None:
         for item in parsed_request.unsupported_requests:
             notes.append(UnsupportedRequirementNote(feature=item.feature, source_text=item.source_text, explanation=item.explanation, retained_as_future_requirement=item.retained_as_future_requirement))
-    if is_tpms:
-        notes.append(UnsupportedRequirementNote(feature="Pore diameter and throat metrics", explanation="Pore diameter and throat-size metrics are not measured for TPMS, strut-lattice or foam structures in this phase."))
-    if specification.targets.wall_target_mm is not None or specification.constraints.minimum_wall_thickness_mm is not None:
-        notes.append(UnsupportedRequirementNote(feature="wall thickness measurement", explanation="Wall thickness is retained as a requirement but is not measured by Phase 3B.2 validation."))
-    if specification.targets.throat_target_mm is not None or specification.constraints.minimum_throat_size_mm is not None:
-        notes.append(UnsupportedRequirementNote(feature="throat size measurement", explanation="Throat size is retained as a requirement but is not measured by Phase 3B.2 validation."))
+    if specification.generation.metrology == "none" and (
+        specification.constraints.minimum_wall_thickness_mm is not None or specification.constraints.minimum_throat_size_mm is not None
+    ):
+        notes.append(UnsupportedRequirementNote(feature="wall / throat measurement disabled", explanation="generation.metrology is 'none', so the wall and throat minimums are recorded but not measured."))
     return notes
 
 

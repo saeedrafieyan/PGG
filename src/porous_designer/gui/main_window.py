@@ -325,7 +325,7 @@ class MainWindow(QMainWindow):
 
     def _field_values(self) -> dict:
         data = {}
-        for panel in (self.request_panel, self.domain_panel, self.structure_panel, self.targets_panel, self.generation_panel):
+        for panel in (self.request_panel, self.domain_panel, self.structure_panel, self.targets_panel, self.manufacturing_panel, self.generation_panel):
             data.update(panel.values())
         return data
 
@@ -870,9 +870,7 @@ class MainWindow(QMainWindow):
             self.structure_panel.load(spec.structure)
             self.targets_panel.load(spec.targets, spec.constraints)
             self.generation_panel.load(spec.generation, spec.export)
-            self.manufacturing_panel.process.setText(spec.manufacturing.process)
-            self.manufacturing_panel.printer.setText(spec.manufacturing.printer_profile)
-            self.manufacturing_panel.minimum_feature.setValue(spec.manufacturing.minimum_printable_feature_mm)
+            self.manufacturing_panel.load(spec.manufacturing)
         finally:
             self._applying_agentic_specification = False
 

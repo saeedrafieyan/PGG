@@ -1,0 +1,15 @@
+id: generic_fdm_0.4
+process: fdm
+display_name: Generic FDM, 0.4 mm nozzle
+source: Generic starting values for a 0.4 mm nozzle; replace with calibration-coupon results.
+layer_height_mm: 0.2
+xy_resolution_mm: 0.4
+nozzle_diameter_mm: 0.4
+line_width_mm: 0.45
+min_wall_mm: 0.45          # one extrusion line
+recommended_wall_mm: 0.9   # two lines
+min_hole_mm: 0.8           # vertical holes print undersize
+min_gap_mm: 0.4
+max_overhang_deg: 45       # from vertical
+build_volume_mm: [220, 220, 250]
+traps_material: false      # closed cells are printable (but not seedable)

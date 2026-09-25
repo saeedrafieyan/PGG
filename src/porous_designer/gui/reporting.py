@@ -93,8 +93,8 @@ def generate_html_report(run_dir: Path, preview_image: Path | None = None) -> Pa
   <h2>Limitations</h2>
   <ul>
     <li>Preview metrics are not final validation metrics.</li>
-    <li>STEP, FEA, inverse design, cloud deployment, and LLM assistance are disabled in Phase 3A.</li>
-    <li>Wall thickness and throat size are marked unavailable unless supplied by later validators.</li>
+    <li>Sizes are measured on voxels (about half a voxel of uncertainty); permeability and stiffness are computed on the periodic unit cell.</li>
+    <li>Printability rules use generic printer profiles unless a calibrated profile is selected.</li>
   </ul>
 </body>
 </html>

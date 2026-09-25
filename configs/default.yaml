@@ -6,6 +6,7 @@ generation:
   maximum_memory_gb: 16.0
   maximum_runtime_s: 600
   deterministic_seed: 42
+  minimum_wall_voxels: 0.75   # thinner walls/struts cannot be represented: infeasible
 profiles:
   preview:
     resolution_mm: 0.10
@@ -28,6 +29,8 @@ cleanup:
   max_removed_component_voxels: 7
   reject_boundary_touching: false
   max_detached_fragment_fraction: 0.02
+metrology:
+  max_part_voxels: 1500000   # larger parts are measured on a central sub-volume (the RVE carries the periodic statistics)
 resources:
   warning_memory_fraction: 0.50
   maximum_memory_fraction: 0.75

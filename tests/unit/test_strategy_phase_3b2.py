@@ -67,9 +67,10 @@ def test_deterministic_plan_generation_for_hcp():
 
 def test_deterministic_plan_generation_for_gyroid():
     plan = deterministic_strategy_plan(spec_for(StructureFamily.GYROID), specification_revision=1)
-    text = " ".join(note.explanation for note in plan.unsupported_requirements)
-    assert "TPMS" in text
-    assert "throat" in text
+    # Phase 4.2: TPMS walls and throats are measured, so nothing is unsupported;
+    # the voxel measurement uncertainty is reported as a risk instead.
+    assert not plan.unsupported_requirements
+    assert any("measured on voxels" in risk.description for risk in plan.risks)
 
 
 def test_deterministic_plan_generation_for_cylinder():
@@ -78,8 +79,8 @@ def test_deterministic_plan_generation_for_cylinder():
     assert any("dimensional accuracy" in item.description for item in plan.assumptions)
 
 
-def test_step_is_planned_and_wall_throat_notes_remain():
-    # Phase 4.1: STEP is exported by generate_final; wall/throat stay unmeasured.
+def test_step_is_planned_and_wall_throat_are_measured():
+    # Phase 4.1: STEP is exported by generate_final. Phase 4.2: wall/throat are measured.
     plan = deterministic_strategy_plan(
         spec_for(StructureFamily.HCP_SPHERICAL_PORES, step=True, wall=True, throat=True),
         specification_revision=1,
@@ -87,8 +88,8 @@ def test_step_is_planned_and_wall_throat_notes_remain():
     features = {note.feature for note in plan.unsupported_requirements}
     assert "STEP/STP export" not in features
     assert any("STEP" in step.purpose for step in plan.steps if step.deterministic_tool == "generate_final")
-    assert "wall thickness measurement" in features
-    assert "throat size measurement" in features
+    assert "wall thickness measurement" not in features
+    assert "throat size measurement" not in features
     assert "generate_step" not in tool_names(plan)
 
 

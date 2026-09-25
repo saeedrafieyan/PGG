@@ -1,0 +1,14 @@
+id: generic_lpbf
+process: lpbf
+display_name: Generic metal laser powder-bed fusion (Ti-6Al-4V)
+source: Generic values; replace with calibration-coupon results.
+layer_height_mm: 0.03
+xy_resolution_mm: 0.1
+min_wall_mm: 0.2
+recommended_wall_mm: 0.3
+min_hole_mm: 0.5
+min_gap_mm: 0.3
+min_drain_throat_mm: 0.5
+max_overhang_deg: 45
+build_volume_mm: [250, 250, 300]
+traps_material: true

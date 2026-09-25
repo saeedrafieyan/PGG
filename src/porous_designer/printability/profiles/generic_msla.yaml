@@ -1,0 +1,14 @@
+id: generic_msla
+process: sla
+display_name: Generic masked SLA (LCD), 50 um layers
+source: Generic values for desktop mSLA with standard resin; replace with calibration-coupon results.
+layer_height_mm: 0.05
+xy_resolution_mm: 0.05
+min_wall_mm: 0.3
+recommended_wall_mm: 0.5
+min_hole_mm: 0.5
+min_gap_mm: 0.3
+min_drain_throat_mm: 0.5   # uncured resin must drain / wash out of the pores
+max_overhang_deg: 60       # from vertical
+build_volume_mm: [130, 80, 160]
+traps_material: true       # closed pores trap liquid resin

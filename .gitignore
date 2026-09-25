@@ -46,3 +46,6 @@ Thumbs.db
 # Local outputs of the legacy scripts and GUI
 step_log.txt
 logs/
+
+# user printer profiles (calibration results)
+/printers/

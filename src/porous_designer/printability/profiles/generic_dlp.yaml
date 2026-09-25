@@ -1,0 +1,14 @@
+id: generic_dlp
+process: dlp
+display_name: Generic DLP, 40 um pixels
+source: Generic values for DLP with standard or biocompatible resin; replace with calibration-coupon results.
+layer_height_mm: 0.05
+xy_resolution_mm: 0.04
+min_wall_mm: 0.2
+recommended_wall_mm: 0.4
+min_hole_mm: 0.4
+min_gap_mm: 0.25
+min_drain_throat_mm: 0.4
+max_overhang_deg: 60
+build_volume_mm: [100, 60, 150]
+traps_material: true

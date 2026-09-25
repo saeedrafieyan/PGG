@@ -1,0 +1,14 @@
+id: generic_volumetric_xolography
+process: volumetric
+display_name: Generic xolography (dual-colour light-sheet)
+source: Generic values; cuvette size and feature limits depend on the system - calibrate.
+layer_height_mm: null
+xy_resolution_mm: 0.025
+min_wall_mm: 0.05
+recommended_wall_mm: 0.1
+min_hole_mm: 0.2
+min_gap_mm: 0.15
+min_drain_throat_mm: 0.2
+max_overhang_deg: null
+build_volume_mm: [10, 10, 10]
+traps_material: true

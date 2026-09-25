@@ -45,6 +45,9 @@ from porous_designer.services.mesh_optimization import (
     optimize_and_validate_mesh,
 )
 from porous_designer.services.resource_estimation import ResourceEstimate, estimate_resources
+from porous_designer.metrology.report import measure_part, metrology_checks
+from porous_designer.printability.profiles import profile_for
+from porous_designer.printability.rules import evaluate_printability
 from porous_designer.services.validation_service import ValidationConfig, run_validation
 from porous_designer.tuning.porosity_solver import TuningResult, bisection_solve
 
@@ -61,6 +64,7 @@ class TimingBreakdown:
     voxel_generation_s: float = 0.0
     marching_cubes_s: float = 0.0
     validation_s: float = 0.0
+    metrology_s: float = 0.0
     export_s: float = 0.0
     total_s: float = 0.0
 
@@ -93,6 +97,8 @@ class GenerationResult:
     threemf_path: Path | None = None
     step_path: Path | None = None
     export_status: dict[str, Any] = field(default_factory=dict)
+    measurements: dict[str, Any] = field(default_factory=dict)
+    printability: dict[str, Any] | None = None
 
 
 def load_app_config(path: str | Path | None = None) -> dict[str, Any]:
@@ -481,8 +487,58 @@ def generate_porous_stl(
         wall_voxels=wall_voxels,
         mesh_authoritative=True,
     )
-    bb.set_validation_report(report)
     timing.validation_s = time.perf_counter() - t0
+
+    # --- measurements and printability (Phase 4.2) ---
+    t0 = time.perf_counter()
+    metrology = None
+    printability = None
+    level = "none" if profile == GenerationProfile.PREVIEW else spec.generation.metrology
+    if level != "none":
+        try:
+            metrology = measure_part(
+                spec,
+                level=level,
+                solid=solid_core,
+                inside=inside_core,
+                voxel_mm=final_voxel,
+                open_axes=_open_axes(spec),
+                mesh=mesh_result.mesh,
+                field=_crop_core(final_model, generated.field) if generated.field is not None else None,
+                domain_sdf=_crop_core(final_model, final_model.domain_sdf),
+                domain_volume_mm3=domain_vol,
+                control_name=problem.name,
+                control=control_parameter,
+                calibration=final_model.calibration,
+                max_voxels=int(config.get("metrology", {}).get("max_part_voxels", 1_500_000)),
+            )
+            for check in metrology_checks(spec, metrology, percolation_axes=_open_axes(spec)):
+                report.add_check(check)
+        except Exception as exc:  # a measurement failure must not lose the part
+            logging.getLogger(__name__).exception("metrology failed")
+            messages.append(f"measurements failed: {exc}")
+    printer = profile_for(spec.manufacturing.process, spec.manufacturing.printer_profile)
+    if printer is not None and profile != GenerationProfile.PREVIEW:
+        try:
+            printability = evaluate_printability(
+                spec,
+                printer,
+                metrology=metrology,
+                mesh=mesh_result.mesh,
+                solid=solid_core,
+                voxel_mm=final_voxel,
+                enforce=spec.manufacturing.enforce_printability,
+            )
+            for check in printability.checks:
+                report.add_check(check)
+            if printability.violations:
+                messages.append(f"{len(printability.violations)} printability issue(s) for {printer.display_name or printer.id}")
+        except Exception as exc:
+            logging.getLogger(__name__).exception("printability failed")
+            messages.append(f"printability check failed: {exc}")
+    report.compute_overall_status()
+    bb.set_validation_report(report)
+    timing.metrology_s = time.perf_counter() - t0
 
     # --- export ---
     t0 = time.perf_counter()
@@ -560,6 +616,8 @@ def generate_porous_stl(
         "tuning_grid_porosity": tuning.estimated_porosity,
         "final_grid_refinement": None if refined is None else {"converged": refined.converged, "porosity": refined.estimated_porosity},
         "mesh_porosity_corrections": mesh_corrections,
+        "measurements": metrology.headline() if metrology is not None else None,
+        "printability": {"profile": printability.profile_id, "violations": [c.name for c in printability.violations], **printability.metrics} if printability is not None else None,
         "placement_offset_mm": placement_offset,
         "minimum_wall_voxels": wall_voxels,
         "tuning_voxel_mm": tune_voxel,
@@ -612,6 +670,10 @@ def generate_porous_stl(
     }
     (run_dir / "checksums.json").write_text(json.dumps(checksums, indent=2), encoding="utf-8")
     (run_dir / "validation_report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    if metrology is not None:
+        (run_dir / "metrology.json").write_text(json.dumps(metrology.to_dict(), indent=2, default=float), encoding="utf-8")
+    if printability is not None:
+        (run_dir / "printability.json").write_text(json.dumps(printability.to_dict(), indent=2, default=float), encoding="utf-8")
     final_acceptance_profile = profile == GenerationProfile.FINAL
     # Warnings (e.g. resolution-limited voxel/mesh disagreement) are reported
     # but do not reject the part; any failed check does.
@@ -654,6 +716,8 @@ def generate_porous_stl(
         threemf_path=threemf_result.path if threemf_result else None,
         step_path=step_result.path if step_result and step_result.status == "exported" else None,
         export_status=export_status,
+        measurements=metrology.headline() if metrology is not None else {},
+        printability=printability.to_dict() if printability is not None else None,
     )
 
 
@@ -702,6 +766,7 @@ def _write_timing(path: Path, timing: TimingBreakdown, peak_mb: float) -> None:
                 "voxel_generation_s": timing.voxel_generation_s,
                 "marching_cubes_s": timing.marching_cubes_s,
                 "validation_s": timing.validation_s,
+                "metrology_s": timing.metrology_s,
                 "export_s": timing.export_s,
                 "total_s": timing.total_s,
                 "peak_memory_mb": peak_mb,

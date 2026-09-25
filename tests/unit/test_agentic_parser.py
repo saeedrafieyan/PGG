@@ -78,13 +78,14 @@ def test_confidence_assignment_categories():
     assert field(result, "structure.family").confidence_category.value == "high"
 
 
-def test_step_is_accepted_and_throat_still_unsupported():
-    # Phase 4.1: STEP is a supported (faceted) export; throat size is still not a validator.
+def test_step_and_throat_are_supported():
+    # Phase 4.1: STEP is a supported (faceted) export. Phase 4.2: throat size is a measured constraint.
     result = parse("Create a 4 x 4 x 4 mm gyroid with STEP output and throat size 0.2 mm.")
     features = {item.feature for item in result.unsupported_requests}
     assert "STEP export" not in features
-    assert "throat-size constraint" in features
+    assert "throat-size constraint" not in features
     assert field(result, "export.formats").value == ["step"]
+    assert field(result, "constraints.minimum_throat_size_mm").value == 0.2
 
 
 def test_schema_rejects_unknown_field_and_code():
