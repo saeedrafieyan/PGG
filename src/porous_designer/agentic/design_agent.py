@@ -383,7 +383,7 @@ class DesignAgent:
     def printer(self, intent: DesignIntent) -> PrinterProfile | None:
         return profile_for(intent.get("process"), intent.get("printer_profile") or "")
 
-    def requirements(self, intent: DesignIntent, printer: PrinterProfile | None, domain_min_mm: float) -> Requirements:
+    def requirements(self, intent: DesignIntent, printer: PrinterProfile | None, domain_min_mm: float, domain: DomainSpec | None = None) -> Requirements:
         walls = [v for v in (intent.get("min_wall_mm"), printer.min_wall_mm if printer else None) if v]
         opens = [v for v in (intent.get("min_throat_mm"), printer.min_hole_mm if printer else None) if v]
         family = intent.get("family")
@@ -396,6 +396,9 @@ class DesignAgent:
             permeability_m2=intent.get("permeability_m2"),
             youngs_relative=intent.get("youngs_relative"),
             max_cell_mm=domain_min_mm / 2.0,
+            # walls (10th percentile) and openings must span >= 1.5 voxels at the finest grid the
+            # memory budget allows (the Federica HCP fixture runs at 1.7 voxels)
+            min_resolvable_mm=1.5 * self._fit_resources(domain, 0.02) if domain is not None and self.use_feasibility else None,
         )
 
     def _domain(self, intent: DesignIntent) -> DomainSpec:
@@ -451,13 +454,65 @@ class DesignAgent:
                 return v.value  # the stated range is outside the family: report it as infeasible
         return float(min(max(v.value, lo), hi))
 
-    def _rank(self, intent: DesignIntent, printer, req: Requirements, domain_min: float, *, closest_pore: float | None = None):
-        """Evaluate candidate architectures in preference order; the first feasible one wins.
+    def _porosity_options(self, intent: DesignIntent, fam: StructureFamily, var: TPMSVariant) -> list[float]:
+        """Other porosities the designer may use for this family, nearest to the preferred one first.
 
-        With ``closest_pore`` every candidate is evaluated and the feasible one whose
-        (smallest printable) median pore is nearest to it wins.
+        Empty when the user stated a single porosity. Within a stated range; within the
+        cited literature range for a literature value; within 50-90 % for a default.
         """
-        ranking, chosen, feasible = [], None, []
+        v = intent.values.get("porosity")
+        phi0 = self._porosity_for_family(intent, fam, var)
+        rng = porosity_range(fam, var)
+        if v is None or phi0 is None or rng is None or (v.source == "user" and intent.get("porosity_min") is None):
+            return []
+        lo, hi = rng[0] + 0.01, rng[1] - 0.01
+        if intent.get("porosity_min") is not None and intent.get("porosity_max") is not None:
+            lo, hi = max(lo, intent.get("porosity_min")), min(hi, intent.get("porosity_max"))
+        elif self._kb_porosity_range and v.source in ("knowledge_base", "designer"):
+            lo, hi = max(lo, self._kb_porosity_range[0]), min(hi, self._kb_porosity_range[1])
+        else:
+            lo, hi = max(lo, 0.5), min(hi, 0.9)
+        if lo > hi:
+            return []
+        grid = [round(lo + 0.025 * i, 4) for i in range(int((hi - lo) / 0.025) + 1)] + [round(hi, 4)]
+        return sorted({p for p in grid if abs(p - phi0) > 1e-3}, key=lambda p: (abs(p - phi0), p))
+
+    def _evaluate_candidate(self, intent, fam, var, phi, req: Requirements, domain_min: float):
+        r = Requirements(**{**req.to_dict(), "porosity": phi})
+        if fam.is_sphere_lattice:
+            r.pore_mm = None
+            pore = intent.values.get("pore_mm")
+            if pore is not None and pore.source == "user":
+                cell, why = float(pore.value), "generating sphere (pore) diameter from the request"
+            else:
+                # the pore diameter is this family's length scale: size it like a cell
+                cell, why = cell_for_targets(fam, var, phi, r)
+                if cell is None:
+                    cell, why = float(pore.value if pore is not None else 1.0), "generating sphere (pore) diameter"
+                else:
+                    why = "smallest pore diameter meeting the printer and resolution limits"
+                    if pore is not None and pore.value > cell:
+                        cell, why = float(pore.value), "generating sphere (pore) diameter"
+        elif not intent.is_free("cell_mm"):
+            cell, why = float(intent.get("cell_mm")), "stated in the request"
+        else:
+            cell, why = cell_for_targets(fam, var, phi, r)
+            if cell is None:
+                cell, why = min(2.0, domain_min / 3.0), "default 2 mm cell (at least three cells across the part)"
+        point = evaluate(fam, var, phi, cell, r)
+        row = {"family": table_key(fam, var), "porosity": phi, "cell_mm": cell, "cell_reason": why, **point.to_dict()}
+        return row, ((fam, var, phi, cell, why, point) if point.feasible else None)
+
+    def _rank(self, intent: DesignIntent, printer, req: Requirements, domain_min: float, *, closest_pore: float | None = None):
+        """Choose the architecture (and, if it is free, the porosity).
+
+        Pass 1 evaluates every candidate at the preferred porosity, in preference order;
+        the first feasible one wins, or with ``closest_pore`` the feasible one whose
+        (smallest printable) median pore is nearest to it. Pass 2 runs only if nothing
+        is feasible and the porosity was not stated as a single value: candidates are
+        tried at other allowed porosities, nearest first.
+        """
+        ranking, feasible, starts = [], [], []
         for fam, var in self._candidates(intent, printer):
             phi = self._porosity_for_family(intent, fam, var)
             if phi is None and intent.get("youngs_relative"):
@@ -465,26 +520,29 @@ class DesignAgent:
                 if phi is None:
                     ranking.append({"family": table_key(fam, var), "feasible": False, "issues": ["target stiffness outside this family's range"]})
                     continue
-            r = Requirements(**{**req.to_dict(), "porosity": phi})
-            if fam.is_sphere_lattice:
-                r.pore_mm = None
-                cell = float(intent.get("pore_mm") or 1.0)
-                why = "generating sphere (pore) diameter"
-            elif not intent.is_free("cell_mm"):
-                cell, why = float(intent.get("cell_mm")), "stated in the request"
-            else:
-                cell, why = cell_for_targets(fam, var, phi, r)
-                if cell is None:
-                    cell, why = min(2.0, domain_min / 3.0), "default 2 mm cell (at least three cells across the part)"
-            point = evaluate(fam, var, phi, cell, r)
-            ranking.append({"family": table_key(fam, var), "porosity": phi, "cell_mm": cell, "cell_reason": why, **point.to_dict()})
-            if point.feasible:
-                feasible.append((fam, var, phi, cell, why, point))
+            starts.append((fam, var, phi))
+            row, ok = self._evaluate_candidate(intent, fam, var, phi, req, domain_min)
+            ranking.append(row)
+            if ok:
+                feasible.append(ok)
                 if closest_pore is None:
                     break
         if feasible:
             chosen = feasible[0] if closest_pore is None else min(feasible, key=lambda c: abs(c[5].pore_mm - closest_pore))
-        return chosen, ranking
+            return chosen, ranking
+        if intent.get("youngs_relative"):
+            return None, ranking
+        trials = []
+        for order, (fam, var, phi) in enumerate(starts):
+            for alt in self._porosity_options(intent, fam, var):
+                trials.append((abs(alt - phi), order, fam, var, alt))
+        for _dist, _order, fam, var, alt in sorted(trials, key=lambda t: (t[0], t[1])):
+            row, ok = self._evaluate_candidate(intent, fam, var, alt, req, domain_min)
+            row["porosity_search"] = True
+            ranking.append(row)
+            if ok:
+                return ok, ranking
+        return None, ranking
 
     def design(self, intent: DesignIntent, trace: list[TraceStep]) -> tuple[DesignSpecification | None, dict]:
         printer = self.printer(intent)
@@ -495,7 +553,7 @@ class DesignAgent:
                 intent.set("porosity", (intent.get("porosity_min") + intent.get("porosity_max")) / 2, "designer", "midpoint of the requested range", confirm=True)
             elif not intent.get("youngs_relative"):
                 intent.set("porosity", 0.7, "default", "no porosity stated: 70 % assumed", confirm=True)
-        req = self.requirements(intent, printer, domain_min)
+        req = self.requirements(intent, printer, domain_min, domain)
         if not self.use_feasibility:
             return self._naive_design(intent, domain, printer, req, trace)
         fit = self._fits_printer(domain, printer)
@@ -510,7 +568,14 @@ class DesignAgent:
                 info["explanation"] += "\nNearest feasible options:\n" + "\n".join(f"- {a['description']}" for a in info["alternatives"])
             trace.append(TraceStep("designer", "feasibility", "part does not fit the printer", info))
             return None, info
-        chosen, ranking = self._rank(intent, printer, req, domain_min)
+        chosen, ranking = None, []
+        robust = printer.recommended_wall_mm if printer is not None and printer.recommended_wall_mm else None
+        if robust and (req.min_wall_mm or 0) < robust and intent.get("min_wall_mm") is None:
+            # aim for the printer's recommended (robust) wall first; fall back to its minimum
+            chosen, ranking = self._rank(intent, printer, Requirements(**{**req.to_dict(), "min_wall_mm": robust}), domain_min)
+        if chosen is None:
+            chosen, ranking2 = self._rank(intent, printer, req, domain_min)
+            ranking += ranking2
         info: dict[str, Any] = {"printer": printer.id if printer else None, "requirements": req.to_dict(), "ranking": ranking}
         pore = intent.values.get("pore_mm")
         if chosen is None and pore is not None and pore.source == "knowledge_base":
@@ -520,14 +585,14 @@ class DesignAgent:
             chosen, ranking2 = self._rank(intent, printer, relaxed, domain_min, closest_pore=pore.value)
             if chosen is not None:
                 literature, achieved = pore.value, chosen[5].pore_mm
-                where = printer.display_name if printer else "the printer"
+                where = printer.display_name if printer else f"a grid that fits the memory budget (features >= {req.min_resolvable_mm:.3f} mm)" if req.min_resolvable_mm else "the printer"
                 rng = self._kb_pore_range
                 within = rng is not None and rng[0] <= achieved <= rng[1]
                 intent.set(
                     "pore_mm",
                     round(achieved, 4),
                     "designer",
-                    f"the typical literature pore size {literature:g} mm cannot be printed on {where}; "
+                    f"the typical literature pore size {literature:g} mm cannot be {'printed on' if printer else 'resolved on'} {where}; "
                     + (f"{achieved:.2f} mm is the closest printable size and is inside the cited range {rng[0]:g}-{rng[1]:g} mm" if within else f"{achieved:.2f} mm is the closest printable size" + (f" (cited range {rng[0]:g}-{rng[1]:g} mm)" if rng else "")),
                     citations=pore.citations,
                     confirm=True,
@@ -562,7 +627,8 @@ class DesignAgent:
                 printers=self._alternative_printers(intent, printer),
             )
             info["alternatives"] = [a.to_dict() for a in alternatives[:6]]
-            info["explanation"] = self._infeasibility_text(fam, var, phi, req, ranking[0] if ranking else {}, printer, alternatives)
+            first = ranking[0] if ranking else {}
+            info["explanation"] = self._infeasibility_text(fam, var, first.get("porosity") or phi, req, first, printer, alternatives)
             trace.append(TraceStep("designer", "feasibility", "no candidate meets the targets", info))
             return None, info
         fam, var, phi, cell, why, point = chosen
@@ -580,13 +646,15 @@ class DesignAgent:
                 "porosity",
                 round(phi, 4),
                 "designer",
-                (f"chosen inside your range {intent.get('porosity_min'):.0%}-{intent.get('porosity_max'):.0%}" if within else f"{old.value:.0%} ({old.source}) is outside what {table_key(fam, var)} reaches with open pores")
-                + f"; {phi:.0%} is the nearest achievable",
+                (f"chosen inside your range {intent.get('porosity_min'):.0%}-{intent.get('porosity_max'):.0%}" if within else f"{old.value:.0%} ({old.source}) cannot be made with {table_key(fam, var)} within the printer and resolution limits")
+                + f"; {phi:.1%} is the nearest porosity that can",
                 citations=old.citations,
                 confirm=True,
             )
         if intent.is_free("cell_mm") and not fam.is_sphere_lattice:
             intent.set("cell_mm", round(cell, 4), "designer", why)
+        if fam.is_sphere_lattice and (intent.values.get("pore_mm") is None or intent.values["pore_mm"].source != "user") and abs(cell - float(intent.get("pore_mm") or -1)) > 1e-6:
+            intent.set("pore_mm", round(cell, 4), "designer", why, confirm=True)
         if intent.is_free("resolution_mm"):
             features = [v for v in (point.wall_mm, point.throat_mm) if v]
             h = min(features) / 4.0 if features else 0.1
@@ -703,6 +771,11 @@ class DesignAgent:
             d = smallest_printable_pore(fam, var, phi, req.min_wall_mm)
             if d:
                 lines.append(f"At {phi:.0%} porosity a {table_key(fam, var)} wall of {req.min_wall_mm:.3f} mm needs pores of at least {d:.3f} mm (pore-to-wall ratio of this architecture).")
+        if any("voxel grid" in i for i in first_row.get("issues", [])):
+            feats = [v for v in (first_row.get("wall_mm"), first_row.get("throat_mm")) if v]
+            if feats:
+                h = min(feats) / 2.0
+                lines.append(f"A finer voxel grid (voxels of {h:.3f} mm or less) would resolve it; allow more memory (larger voxel budget) or choose larger pores or cells.")
         if alternatives:
             lines.append("Nearest feasible options:")
             for a in alternatives[:4]:
@@ -807,9 +880,10 @@ class DesignAgent:
         if verification.get("reachable") is False:
             msg = " ".join(verification["messages"])
             if "thinner than" in msg:
-                if intent.is_free("resolution_mm") and data["generation"]["final_resolution_mm"] > 0.021:
-                    old = data["generation"]["final_resolution_mm"]
-                    data["generation"]["final_resolution_mm"] = round(max(0.02, old * 0.7), 4)
+                old = data["generation"]["final_resolution_mm"]
+                finer = self._fit_resources(DomainSpec.model_validate(data["domain"]), max(0.02, old * 0.7))
+                if intent.is_free("resolution_mm") and finer < 0.95 * old:
+                    data["generation"]["final_resolution_mm"] = round(finer, 4)
                     data["generation"]["reference_resolution_mm"] = data["generation"]["final_resolution_mm"]
                     intent.set("resolution_mm", data["generation"]["final_resolution_mm"], "designer", "repaired: finer resolution for thin walls")
                     repairs.append({"rule": "refine_resolution", "reason": "walls thinner than a voxel", "from": old, "to": data["generation"]["final_resolution_mm"]})
@@ -919,7 +993,8 @@ class DesignAgent:
             if iteration == self.max_iterations:
                 result.iterations.append(record)
                 result.status = "delivered_with_warnings" if verification["success"] else "failed"
-                result.explanation = f"Stopped after {self.max_iterations} iteration(s); remaining issues: {', '.join(sorted(actionable))}."
+                why = ", ".join(sorted(actionable)) or " ".join(verification["messages"][:2]) or "generation did not succeed"
+                result.explanation = f"Stopped after {self.max_iterations} iteration(s); remaining issues: {why}"
                 break
             self._event("repairing", "Adjusting the design towards the failed checks")
             new_spec, repairs, conflicts = self.repair(intent, spec, verification)

@@ -56,6 +56,7 @@ class Requirements:
     permeability_m2: float | None = None
     youngs_relative: float | None = None
     max_cell_mm: float | None = None  # at least two cells across the part
+    min_resolvable_mm: float | None = None  # smallest feature the voxel grid can resolve (1.5 voxels at the finest affordable grid)
 
     def to_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v is not None}
@@ -83,6 +84,11 @@ def evaluate(family: StructureFamily, variant: TPMSVariant, porosity: float, cel
         point.issues.append(f"pore openings {point.throat_mm:.3f} mm < required {req.min_opening_mm:.3f} mm")
     if req.pore_mm and abs(point.pore_mm - req.pore_mm) > 0.2 * req.pore_mm:
         point.issues.append(f"median pore {point.pore_mm:.3f} mm differs from the target {req.pore_mm:.3f} mm")
+    if req.min_resolvable_mm:
+        if point.wall_mm < req.min_resolvable_mm:
+            point.issues.append(f"walls {point.wall_mm:.3f} mm are below the {req.min_resolvable_mm:.3f} mm the voxel grid can resolve within the memory budget")
+        if point.throat_mm < req.min_resolvable_mm:
+            point.issues.append(f"pore openings {point.throat_mm:.3f} mm are below the {req.min_resolvable_mm:.3f} mm the voxel grid can resolve within the memory budget")
     if req.max_cell_mm and cell_mm > req.max_cell_mm:
         point.issues.append(f"cell {cell_mm:.2f} mm leaves fewer than two cells across the part (max {req.max_cell_mm:.2f} mm)")
     if req.permeability_m2 and point.permeability_m2 and not (0.7 <= point.permeability_m2 / req.permeability_m2 <= 1.4):
@@ -108,6 +114,8 @@ def cell_for_targets(family: StructureFamily, variant: TPMSVariant, porosity: fl
         lower.append(req.min_wall_mm / max(props.wall_d10_per_cell, 1e-6))
     if req.min_opening_mm:
         lower.append(req.min_opening_mm / max(props.throat_per_cell, 1e-6))
+    if req.min_resolvable_mm:
+        lower.append(req.min_resolvable_mm / max(min(props.wall_d10_per_cell, props.throat_per_cell), 1e-6))
     if lower:
         need = max(lower)
         cell = 1.25 * need

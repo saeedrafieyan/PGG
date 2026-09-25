@@ -93,9 +93,22 @@ request ──► Planner ──► DesignIntent (value + source + reason + cita
   - a stated range, a default or a literature value moves to the nearest
     porosity the architecture can reach with open pores. Spherical pores
     only interconnect above about 55 % (SC), 72 % (BCC) and 78 % (FCC/HCP)
-    porosity.
+    porosity;
+  - if no architecture is feasible at the preferred porosity, and the user
+    did not state a single value, the Designer searches other porosities
+    nearest first. The search stays within the stated range, the cited
+    literature range, or 50–90 % for a default. Every change is recorded
+    with its reason.
+- **Length scale**: sphere packings have no unit cell. When the user does not
+  state a pore diameter, it is sized like a cell (the smallest diameter that
+  meets the printer and resolution limits).
+- **Resolvable size**: walls (10th percentile) and openings must span at
+  least 1.5 voxels at the finest grid the memory budget allows (60 M grid
+  points by default). This is treated like a printer limit, and a design
+  that only a larger budget could resolve says so.
 - **Feasibility**:
   - the part must fit the printer (vial or build volume);
+  - walls and openings must be resolvable within the memory budget;
   - walls must be at least the larger of the user's and the printer's
     minimum, and openings at least the larger minimum hole or throat;
   - the median pore must be within 20 % of its target;
@@ -132,7 +145,8 @@ Bounded, logged rules, at most 3 iterations:
 | openings / drainage | enlarge the cell |
 | median pore off target | scale the cell by target / measured |
 | unsupported islands (lattices on layer printers) | switch to a sheet gyroid (self-supporting) |
-| walls thinner than the voxel | refine the resolution |
+| walls thinner than the voxel | refine the resolution (within the memory budget), else enlarge the cell |
+| porosity missed on the voxel grid | refine the resolution, else report that more memory is needed |
 | permeability off target | scale the cell by √(target / measured) |
 | stiffness off target | invert the table with the measured model error |
 
