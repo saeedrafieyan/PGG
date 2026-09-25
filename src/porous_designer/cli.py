@@ -74,6 +74,26 @@ def cmd_generate(args: argparse.Namespace) -> int:
             print(f"  Export {fmt}:{' ' * max(1, 13 - len(fmt))}{status}")
     if result.step_path:
         print(f"  STEP:                {result.step_path}")
+    labels = {
+        "pore_d50_mm": ("Pore size (median)", "mm"),
+        "wall_d50_mm": ("Wall thickness (median)", "mm"),
+        "wall_min_mm": ("Wall thickness (thin 10%)", "mm"),
+        "percolation_diameter_mm": ("Largest passing sphere", "mm"),
+        "closed_void_fraction": ("Closed pore fraction", ""),
+        "specific_surface_per_mm": ("Specific surface", "1/mm"),
+        "tortuosity": ("Tortuosity", ""),
+        "permeability_m2": ("Permeability", "m^2"),
+        "youngs_relative": ("Stiffness E*/Es (min)", ""),
+    }
+    for key, value in (result.measurements or {}).items():
+        name, unit = labels.get(key, (key, ""))
+        text = f"{value:.3e}" if key == "permeability_m2" else f"{value:.4g}"
+        print(f"  {name + ':':26s}{text} {unit}".rstrip())
+    if result.printability:
+        bad = [c for c in result.printability["checks"] if c["status"] != "pass"]
+        print(f"  Printability ({result.printability['profile_id']}): {'OK' if not bad else str(len(bad)) + ' issue(s)'}")
+        for c in bad:
+            print(f"    - {c['name']}: {c['message']}")
     if result.optimization:
         print(f"  Optimization:        {result.optimization.profile.value} ({result.optimization.reason})")
         print(f"  Recommended STL:     {result.optimization.recommended_path}")
@@ -317,6 +337,39 @@ def cmd_openrouter_models(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_printers(args: argparse.Namespace) -> int:
+    from porous_designer.printability.profiles import all_profiles, user_profile_dir
+
+    for pid, prof in sorted(all_profiles().items()):
+        tag = " [calibrated]" if prof.calibrated else ""
+        print(f"{pid:34s} {prof.process:12s} wall >= {prof.min_wall_mm} mm, hole >= {prof.min_hole_mm} mm{tag}")
+    print(f"User profiles: {user_profile_dir()}")
+    return 0
+
+
+def cmd_make_coupon(args: argparse.Namespace) -> int:
+    from porous_designer.printability.coupon import make_coupon, write_coupon
+    from porous_designer.printability.profiles import get_profile
+
+    profile = get_profile(args.profile)
+    files = write_coupon(make_coupon(profile), args.output, profile)
+    print(f"Calibration coupon for {profile.display_name or profile.id}:")
+    for key, path in files.items():
+        print(f"  {key:8s} {path}")
+    return 0
+
+
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    from porous_designer.printability.coupon import calibrate_profile
+    from porous_designer.printability.profiles import get_profile, user_profile_dir
+
+    profile = calibrate_profile(get_profile(args.profile), args.measurements, args.name)
+    print(f"Calibrated profile '{profile.id}' saved to {user_profile_dir() / (profile.id + '.yaml')}")
+    print(f"  min wall {profile.min_wall_mm} mm, min hole {profile.min_hole_mm} mm, min gap {profile.min_gap_mm} mm")
+    print(f"  use it with manufacturing.printer_profile: {profile.id}")
+    return 0
+
+
 def cmd_families(args: argparse.Namespace) -> int:
     """List every structure family with the parameter that defines it."""
     from porous_designer.domain.enums import StructureFamily
@@ -347,6 +400,154 @@ def cmd_make_phantom(args: argparse.Namespace) -> int:
     ext = mesh.extents
     print(f"Wound-cavity phantom written to {out}")
     print(f"  extents {ext[0]:.2f} x {ext[1]:.2f} x {ext[2]:.2f} mm, volume {mesh.volume:.1f} mm3, watertight {mesh.is_watertight}, {len(mesh.faces)} triangles")
+    return 0
+
+
+def cmd_build_property_tables(args: argparse.Namespace) -> int:
+    from porous_designer.knowledge.property_tables import DATA_FILE, build_tables
+
+    path = Path(args.output) if args.output else DATA_FILE
+    build_tables(path, with_physics=not args.no_physics, log=lambda m: print(m, flush=True))
+    print(f"Property tables written to {path}")
+    return 0
+
+
+def _print_intent(intent, spec, info) -> None:
+    print("Design intent (source of every value):")
+    for key, v in intent.values.items():
+        if key.startswith("note_"):
+            continue
+        flag = "  [please confirm]" if v.requires_confirmation else ""
+        print(f"  {key:22s} {str(v.value):24s} {v.source:15s} {v.detail}{flag}")
+        for c in v.citations:
+            print(f"  {'':22s} {'':24s} ref: {c}")
+    for key, v in intent.values.items():
+        if key.startswith("note_"):
+            print(f"  note: {v.value}")
+    for item in intent.unsupported:
+        print(f"  not supported: {item}")
+    for item in intent.ambiguities:
+        print(f"  ambiguous: {item}")
+    point = info.get("design_point") or {}
+    if point:
+        print(f"Predicted (property tables): walls {point['wall_mm']:.3f} mm, median pore {point['pore_mm']:.3f} mm, openings {point['throat_mm']:.3f} mm")
+    print(f"Printer check against: {info.get('printer') or 'no printer selected'}")
+
+
+def cmd_design(args: argparse.Namespace) -> int:
+    from porous_designer.agentic.design_agent import DesignAgent
+
+    provider = settings = None
+    if args.provider == "openrouter":
+        from porous_designer.agentic.contracts import ProviderMode
+        from porous_designer.agentic.provider_config import ExternalCallMode, load_provider_settings
+        from porous_designer.agentic.provider_factory import provider_from_settings
+
+        settings = load_provider_settings()
+        settings.external_access_enabled = True
+        settings.provider_mode = ProviderMode.OPENROUTER
+        settings.external_call_mode = ExternalCallMode.ALWAYS
+        provider = provider_from_settings(settings)
+
+    def approve_intent(intent, spec, info) -> bool:
+        _print_intent(intent, spec, info)
+        if args.yes:
+            return True
+        return input("Generate this design? [y/N] ").strip().lower() in ("y", "yes")
+
+    def approve_final(result) -> bool:
+        print(result.explanation or "")
+        if args.yes:
+            return True
+        return input("Accept the result? [Y/n] ").strip().lower() in ("", "y", "yes")
+
+    agent = DesignAgent(
+        provider=provider,
+        settings=settings,
+        output_dir=args.output,
+        max_iterations=args.max_iterations,
+        approve_intent=approve_intent,
+        approve_final=approve_final,
+        printer_profile=args.printer,
+        process=args.process,
+    )
+    result = agent.run(args.request)
+    print(f"Status: {result.status}")
+    if result.status == "infeasible":
+        print(result.explanation)
+    elif result.explanation and result.status not in ("delivered",):
+        print(result.explanation)
+    for it in result.iterations:
+        v = it["verification"]
+        repairs = "; ".join(f"{r['rule']} {r['from']} -> {r['to']}" for r in it.get("repairs", []))
+        print(f"  iteration {it['iteration']}: failed {v['failed'] or 'none'}, warnings {v['warnings'] or 'none'}" + (f"; repair: {repairs}" if repairs else ""))
+    if result.generation is not None and result.generation.stl_path:
+        print(f"Geometry: {result.generation.stl_path}")
+        for path in (result.generation.threemf_path, result.generation.step_path):
+            if path:
+                print(f"  {path}")
+    print(f"Agent trace: {result.trace_path}")
+    return 0 if result.status in ("delivered", "delivered_with_warnings") else 1
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        from porous_designer.api.server import serve
+    except ImportError:
+        print("The web front end needs starlette and uvicorn: pip install porous-designer[web]", file=sys.stderr)
+        return 1
+    print(f"AGE Designer on http://{args.host}:{args.port}  (Ctrl+C to stop)")
+    serve(args.host, args.port, output_dir=Path(args.output) if args.output else None)
+    return 0
+
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    from porous_designer.bench import metrics
+    from porous_designer.bench.prompts import DATA_FILE, load_prompts, write_prompts
+
+    if args.action == "build":
+        path = write_prompts(seed=args.seed)
+        cases = load_prompts(path)
+        print(f"{len(cases)} prompts written to {path}")
+        return 0
+    if args.action == "run":
+        from porous_designer.bench.runner import run_bench
+
+        safe = args.system.replace(":", "_").replace("/", "_")
+        out = Path(args.output) if args.output else runs_dir() / "bench" / f"{safe}_{args.mode}.jsonl"
+        tiers = [int(t) for t in args.tiers.split(",")] if args.tiers else None
+        if args.system.startswith(("age_llm", "llm_")):
+            n = len([c for c in load_prompts() if not tiers or c.tier in tiers])
+            n = min(n, args.limit or n) if not args.per_tier else min(n, args.per_tier * len(tiers or range(7)))
+            print(f"This run makes up to {n} OpenRouter request(s); free models allow about 50 per day.", file=sys.stderr)
+        run_bench(
+            args.system,
+            mode=args.mode,
+            output=out,
+            tiers=tiers,
+            limit=args.limit,
+            per_tier=args.per_tier,
+            resume=not args.fresh,
+            voxel_budget=args.voxel_budget,
+            allow_llm_code=args.allow_llm_code,
+        )
+        print(json.dumps(metrics.summarise_file(out)["overall"], indent=2))
+        print(f"Rows: {out}")
+        return 0
+    # report
+    files = [Path(f) for f in args.files] or sorted((runs_dir() / "bench").glob("*.jsonl"))
+    summaries = {}
+    for f in files:
+        rows = metrics.load_rows(f)
+        if rows:
+            summaries[f"{rows[0]['system']} ({rows[0]['mode']})"] = metrics.summarise(rows)
+    table = metrics.markdown_table(summaries)
+    print(table)
+    if args.by_tier:
+        for f in files:
+            s = metrics.summarise_file(f)
+            print(f"\n{f.name}")
+            print(metrics.markdown_table({f"tier {t}": v for t, v in s["by_tier"].items()}))
     return 0
 
 
@@ -452,6 +653,20 @@ def main(argv: list[str] | None = None) -> int:
     p_models = sub.add_parser("openrouter-models", help="List free OpenRouter models that support strict structured output")
     p_models.set_defaults(func=cmd_openrouter_models)
 
+    p_pr = sub.add_parser("printers", help="List printer/process profiles used by the printability checks")
+    p_pr.set_defaults(func=cmd_printers)
+
+    p_cp = sub.add_parser("make-coupon", help="Write a calibration coupon (STL + measurement sheet) for a printer profile")
+    p_cp.add_argument("output", help="Output folder")
+    p_cp.add_argument("--profile", default="generic_msla", help="Profile id (see 'printers')")
+    p_cp.set_defaults(func=cmd_make_coupon)
+
+    p_cal = sub.add_parser("calibrate", help="Create a printer profile from a filled-in coupon measurement sheet")
+    p_cal.add_argument("--profile", required=True, help="Profile the coupon was made for")
+    p_cal.add_argument("--measurements", required=True, help="Filled-in *_measurements.csv")
+    p_cal.add_argument("--name", required=True, help="Id of the new profile (e.g. my_elegoo_mars)")
+    p_cal.set_defaults(func=cmd_calibrate)
+
     p_fam = sub.add_parser("families", help="List structure families, domains, and export formats")
     p_fam.set_defaults(func=cmd_families)
 
@@ -463,6 +678,43 @@ def main(argv: list[str] | None = None) -> int:
     p_ph.add_argument("--irregularity", type=float, default=0.15)
     p_ph.add_argument("--seed", type=int, default=0)
     p_ph.set_defaults(func=cmd_make_phantom)
+
+    p_des = sub.add_parser("design", help="Agent v2: plain-language request -> verified, printable design")
+    p_des.add_argument("request", help="Design request in plain language")
+    p_des.add_argument("--process", default=None, help="Manufacturing process (fdm, sla, dlp, volumetric_tomographic, ...)")
+    p_des.add_argument("--printer", default=None, help="Printer profile id (see 'printers')")
+    p_des.add_argument("--provider", default="deterministic", choices=["deterministic", "openrouter"])
+    p_des.add_argument("--max-iterations", type=int, default=3)
+    p_des.add_argument("--output", default=None, help="Output folder")
+    p_des.add_argument("--yes", action="store_true", help="Approve both checkpoints automatically")
+    p_des.set_defaults(func=cmd_design)
+
+    p_tab = sub.add_parser("build-property-tables", help="Measure structure-property tables of every family (GPU recommended)")
+    p_tab.add_argument("--output", default=None)
+    p_tab.add_argument("--no-physics", action="store_true", help="Skip permeability and stiffness")
+    p_tab.set_defaults(func=cmd_build_property_tables)
+
+    p_srv = sub.add_parser("serve", help="Local web front end (Describe -> Review -> Download) and JSON API")
+    p_srv.add_argument("--host", default="127.0.0.1")
+    p_srv.add_argument("--port", type=int, default=8765)
+    p_srv.add_argument("--output", default=None)
+    p_srv.set_defaults(func=cmd_serve)
+
+    p_b = sub.add_parser("bench", help="AGE-Bench: build the prompt set, run a system, compare results")
+    p_b.add_argument("action", choices=["build", "run", "report"])
+    p_b.add_argument("--system", default="age", help="age | age_llm:<model> | age_no_knowledge | age_no_feasibility | age_no_verifier | llm_direct:<model> | llm_code:<model>")
+    p_b.add_argument("--mode", default="extract", choices=["extract", "propose", "full"])
+    p_b.add_argument("--tiers", default=None, help="comma-separated tiers, e.g. 1,5,7")
+    p_b.add_argument("--limit", type=int, default=None)
+    p_b.add_argument("--per-tier", type=int, default=None, help="first N prompts of each tier")
+    p_b.add_argument("--output", default=None)
+    p_b.add_argument("--fresh", action="store_true", help="start over instead of resuming")
+    p_b.add_argument("--voxel-budget", type=int, default=None, help="grid points per design (default 60 M; 8 M in full mode for speed)")
+    p_b.add_argument("--allow-llm-code", action="store_true", help="execute LLM-written field functions (isolated process, whitelist-checked)")
+    p_b.add_argument("--seed", type=int, default=2026)
+    p_b.add_argument("--by-tier", action="store_true")
+    p_b.add_argument("files", nargs="*", help="run files for 'report' (default: all in runs/bench)")
+    p_b.set_defaults(func=cmd_bench)
 
     args = parser.parse_args(argv)
     configure_logging(level="DEBUG" if args.verbose else "INFO", json_output=args.json_log)

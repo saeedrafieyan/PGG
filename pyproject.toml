@@ -39,7 +39,11 @@ dev = [
     "pytest-qt>=4.4",
     "pytest-timeout>=2.3",
 ]
-all = ["porous-designer[gui,llm,dev]"]
+web = [
+    "starlette>=0.36",
+    "uvicorn>=0.27",
+]
+all = ["porous-designer[gui,llm,web,dev]"]
 
 [project.scripts]
 porous-designer = "porous_designer.cli:main"
@@ -50,6 +54,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "porous_designer.agentic" = ["prompts/*.txt"]
+"porous_designer.printability" = ["profiles/*.yaml"]
+"porous_designer.knowledge" = ["data/*.yaml", "data/*.json"]
+"porous_designer.api" = ["static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

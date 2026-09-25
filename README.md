@@ -2,167 +2,163 @@
 
 (formerly PGG - Porous Geometry Generation; the Python package is still `porous_designer`)
 
-**PGG, Porous Geometry Generation** is evolving toward an **Agentic
-Porous-Material Design System**. It generates deterministic porous-geometry STL
-artifacts from structured specifications and now includes a human-supervised
-agent-assisted request interpretation workflow. The command-line backend remains
-the authoritative generation and validation engine.
+AGE turns a plain-language request into a printable porous part (STL / 3MF /
+STEP). Every number it reports comes from deterministic tools, not from a
+language model. The **Planner** reads the request and records where each value
+came from. The **Designer** chooses what was left open and checks the printer
+before anything is generated. The **Verifier** generates and measures the
+part. The **Repairer** adjusts only the values the Designer chose. There are
+two human checkpoints: approve the design, then approve the result.
 
 Repository: [github.com/saeedrafieyan/PGG](https://github.com/saeedrafieyan/PGG)
 
 ## Requirements
 
-- Python 3.12
-- Core backend: `numpy`, `scipy`, `scikit-image`, `trimesh`, `gmsh`,
-  `pydantic`, `PyYAML`, `structlog`
-- GUI extra: `PySide6`, `pyvista`, `pyvistaqt`, `psutil`
-
-Install editable development dependencies:
+- Python 3.12+ (3.14 tested)
+- Core: `numpy`, `scipy`, `scikit-image`, `trimesh`, `gmsh`, `pydantic`, `PyYAML`, `structlog`
+- GPU (optional, CUDA via PyTorch): used for large grids, permeability (LBM) and stiffness (FFT)
+- Extras: `gui` (PySide6, pyvista), `web` (starlette, uvicorn), `llm` (httpx, keyring)
 
 ```powershell
-pip install -e ".[gui,dev]"
+pip install -e ".[gui,web,llm,dev]"
 ```
 
-## Usage
-
-Structured CLI:
+## Quick start
 
 ```powershell
-porous-designer generate tests\fixtures\federica_regression.yaml --yaml --profile preview
+# plain language -> verified design (two checkpoints in the terminal; --yes approves both)
+porous-designer design "bone scaffold, 10 x 10 x 10 mm cube, gyroid, for my resin printer"
+
+# desktop app: Describe -> Review -> Download   (--advanced for every parameter)
+porous-designer-gui
+
+# local web app and JSON API on http://127.0.0.1:8765
+porous-designer serve
+```
+
+Structured specifications still work:
+
+```powershell
+porous-designer generate tests\fixtures\federica_regression.yaml --yaml
 porous-designer estimate tests\fixtures\federica_regression.yaml --yaml --profile final
 ```
-
-GUI:
-
-```powershell
-porous-designer-gui
-python -m porous_designer.gui.app
-launch_pgg_gui.bat
-```
-
-Debug GUI launch:
-
-```powershell
-python -m porous_designer.gui.app --debug-gui
-launch_pgg_gui.bat --debug-gui
-```
-
-Legacy scripts are preserved for comparison, but new development should use the
-`porous_designer` package.
 
 ## Phase 4.1: structures, domains, formats
 
 - **16 families**: sphere pores (SC, BCC, FCC, HCP); sheet or network TPMS
   (gyroid, diamond, primitive, I-WP, Neovius, Fischer-Koch S, Lidinoid); strut
   lattices (cubic, BCC, octet, Kelvin); stochastic Voronoi foam.
-- **Domains**: box, cylinder, sphere, or any closed mesh file (STL/OBJ/PLY/3MF,
-  with units); optional solid skin on all boundaries or the side wall only.
-- **Grading**: porosity (linear, radial, from the surface) and unit-cell size.
-- **Exports**: STL, 3MF (millimetres, for slicers), faceted STEP (for CAD).
-- The exported mesh is tuned to hit the porosity target; CUDA is used for
-  large grids when available.
+- **Domains**: box, cylinder, sphere, or any closed mesh (STL/OBJ/PLY/3MF), with
+  an optional solid skin.
+- **Grading** of porosity (linear, radial, from the surface) and cell size.
+- **Exports**: STL, 3MF (for slicers), faceted STEP (for CAD).
+
+See `docs/phase_4_1_report.md` and `examples/phase_4_1/`.
+
+## Phase 4.2: measurements and printability
+
+Every run is measured (`generation.metrology`: `basic` by default, `full` adds
+physics):
+
+- pore-size and wall-thickness distributions (continuous PSD / local thickness);
+- throat size (largest sphere passing through), MIP-like intrusion curve,
+  closed pores, surface area, curvature and geometric tortuosity;
+- `full`: permeability from a lattice-Boltzmann solver (GPU) and the effective
+  stiffness tensor from FFT homogenisation, both on the periodic unit cell.
+
+Printer profiles for FDM, MSLA, DLP, tomographic and xolographic volumetric,
+extrusion bioprinting, SLS and LPBF check walls, openings, drainage, islands,
+overhangs, vial or build-volume fit and stray dose. A calibration coupon turns
+measurements of your own printer into a profile:
 
 ```powershell
-porous-designer families
-porous-designer generate examples\phase_4_1\02_octet_sphere.yaml --yaml
-porous-designer make-phantom examples\phase_4_1\wound_phantom.stl
-porous-designer generate examples\phase_4_1\07_wound_phantom_fill.yaml --yaml
+porous-designer printers
+porous-designer make-coupon coupon_out --profile generic_msla
+porous-designer calibrate --profile generic_msla --measurements coupon_out\generic_msla_measurements.csv --name my_resin_printer
 ```
 
-See `docs/phase_4_1_report.md` and the example specs in `examples/phase_4_1/`.
+See `docs/phase_4_2_report.md`.
 
-## Agent-Assisted Requests
+## Phase 4.3: design agent
 
-The GUI has separate `Manual Design` and `Agentic Design` modes. Manual Design
-lets users enter engineering parameters directly. Agentic Design can parse
-natural-language requests into proposed typed fields, show confidence/evidence, detect
-ambiguities, and require field-by-field human approval before applying anything
-to the active specification.
+`porous-designer design "<request>" [--process sla] [--printer my_resin_printer] [--provider openrouter] [--yes]`
 
-External agent access is disabled by default. Deterministic-only parsing works
-without network credentials.
+- **Planner**: the deterministic parser, or grounded OpenRouter extraction (every
+  value must quote the request). Application words ("bone graft", "wound")
+  add literature values with citations (`knowledge/data/applications.yaml`).
+- **Designer**: measured structure-property tables of every family
+  (`knowledge/data/property_tables.json`, `porous-designer build-property-tables`)
+  predict walls, pores, openings, permeability and stiffness before
+  generation. An infeasible request is explained with numbers and the nearest
+  feasible alternatives (larger pores, lower porosity, another architecture,
+  another printer).
+- **Verifier / Repairer**: measured checks decide. Repairs are bounded (at most
+  3 iterations), logged, and never change a value you stated.
+- Every step is recorded in `agent_trace.json`, next to a `design_report.html`.
 
-Phase 4.0 replaces the OpenAI/Gemini providers with a single OpenRouter
-provider (free models by default) and evidence-grounded extraction: the model
-must quote the request for every value, and code verifies each quote, number,
-and unit before anything is proposed. See `docs/phase_4_0_report.md`. No
-external LLM is required, and external access must be explicitly enabled in the
-GUI provider settings. Store the key once with:
+See `docs/phase_4_3_report.md`.
+
+## Phase 4.4: simple interface
+
+`services/design_session.py` is the one UI-independent flow (Describe -> Review ->
+Download) behind the desktop window, the web page and the JSON API
+(`api/server.py`). The desktop window has one text box, a process and printer
+choice, a review card showing each value with its source, a 3D preview and download
+buttons. **Advanced mode** opens the full engineering window. See
+`docs/phase_4_4_report.md`.
+
+## Phase 4.5: AGE-Bench
+
+470 tiered prompts (explicit, partial, application/lay, constrained,
+infeasible, out-of-scope, held-out paraphrases) with ground truth, a runner and
+metrics. The metrics cover extraction accuracy, invented values, feasibility
+detection, constraint satisfaction, property error, printability, iterations,
+time and user effort. It compares AGE with its ablations and with LLM-only
+baselines:
+
+```powershell
+porous-designer bench build
+porous-designer bench run --system age --mode propose
+porous-designer bench run --system age_llm:<free-model-id> --mode extract --per-tier 5
+porous-designer bench run --system llm_direct:<free-model-id> --mode extract --per-tier 5
+porous-designer bench report --by-tier
+```
+
+See `docs/phase_4_5_report.md`.
+
+## Agent providers
+
+External LLM access is off by default; everything works without a network.
+OpenRouter (free models) is used for grounded extraction only. Store the key
+once, in the OS credential store (it is never written to files or logs):
 
 ```
 porous-designer credentials set
 ```
 
-Run the live faithfulness benchmark (12 cases, uses free-tier requests) with
-`porous-designer evaluate-agent-provider --provider openrouter`.
+## How it works
 
-Provider settings persist across dialog reopen and application restart. Raw API
-keys are never stored in QSettings and are never repopulated into the password
-field; credential availability is shown separately. The Agentic Request panel
-shows call mode, provider, model, credential status, last decision, and last
-execution.
+1. The structure is a continuous signed field (TPMS, strut, Voronoi or sphere
+   pores) combined with the domain's signed distance and an optional skin.
+2. Porosity tuning finds the control parameter on a coarse grid, refines it on
+   the final grid, and corrects it so the exported mesh meets the target.
+3. Marching cubes triangulates the continuous field.
+4. Validation and metrology measure topology, porosity, sizes, connectivity
+   and printability. Physics runs on the periodic unit cell.
+5. Artifacts and reports are written under `runs/<run_id>/`.
 
-Phase 3B.1.3 separates workflow authority: manual fields are hidden while
-Agentic Design is active, approved agentic specifications are shown read-only,
-and stale agentic approvals block preview/final generation.
+## Notes and limits
 
-Phase 3B.2 adds a bounded Engineering Strategy Agent. After a human-approved
-agentic specification, the GUI can generate a reviewable strategy plan with
-deterministic tools, validation gates, unsupported-request notes, risks, and
-user checkpoints. Agentic Preview and Final require an approved non-stale plan,
-but every execution step still requires an explicit user click.
-
-Phase 3B.3 connects approved strategy-plan steps to guarded deterministic
-execution. Users can run plan steps one at a time, see precondition results,
-step status, structured observations, validation gates, and next-action
-recommendations. This is still not autonomous multi-step execution.
-
-## Spec File Format
-
-The modern backend uses structured YAML matching `DesignSpecification`.
-Legacy `key: value` files are still loadable through the CLI adapter.
-
-Legacy example:
-
-```text
-bounding_box: 8 x 14 x 8
-lattice:      hcp
-pore_size:    1.0
-porosity:     75-80%
-formats:      stl
-resolution:   0.04
-output:       sample
-```
-
-## How It Works
-
-1. The structure is a continuous signed field (TPMS, strut, Voronoi, or sphere
-   pores) composed with the domain's signed distance and an optional skin.
-2. Porosity tuning bisects the control parameter (wall thickness, strut
-   diameter, network offset, or lattice spacing) on a coarse grid, refines it
-   on the final grid, and corrects it so the exported mesh meets the target.
-3. The continuous field is triangulated with marching cubes (smooth surfaces).
-4. Validation records topology, porosity, connectivity, cleanup, resources, and
-   provenance.
-5. STL/3MF/STEP artifacts and reports are written under `runs/<run_id>/`.
-
-## Notes And Limits
-
-- Preview meshes are not final validation artifacts.
-- STEP is a faceted solid, written for Final runs when the part can be reduced
-  to `generation.step_max_triangles` within tolerance; the STEP is re-imported
-  and its volume checked. Large lattices skip STEP; use 3MF or STL.
-- Wall-thickness and throat-size minima are recorded but not yet measured.
-- Large final STLs are not loaded automatically by the GUI.
-- Preview rendering presets are display-only and do not alter exported STL
-  geometry or validation metrics.
-- Renderer and OpenGL details are available from the GUI `Diagnostics` action;
-  the normal preview panel shows only a compact preview/final status row.
-- FEA, inverse design, cloud deployment, autonomous multi-step execution,
-  scan-to-domain processing, material optimization, and arbitrary CAD code
-  generation are not part of Phase 4.1.
+- Sizes are measured on voxels (about half a voxel of uncertainty). Permeability
+  and stiffness are unit-cell (bulk) values.
+- Printer profiles are generic until calibrated with the coupon. Printed parts
+  need physical validation.
+- STEP is a faceted solid and is skipped for very large lattices (use 3MF or STL).
+- Scan-to-part, inverse design / optimisation, multi-material, degradation and
+  deployment are outside the current scope. The agent says so when a request
+  asks for them.
 
 ## Example
 
-`tests/fixtures/federica_regression.yaml` reproduces the compact Federica HCP
-regression fixture and writes run artifacts under `runs/<run_id>/`.
+`tests/fixtures/federica_regression.yaml` reproduces the Federica HCP regression
+fixture and writes run artifacts under `runs/<run_id>/`.
