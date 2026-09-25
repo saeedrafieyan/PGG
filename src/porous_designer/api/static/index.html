@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AGE Designer</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e2e2e0; --accent:#2457d6; --ok:#1a7f37; --warn:#9a6700; --bad:#b00020; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161618; --card:#1f1f22; --ink:#ececee; --muted:#9b9ba1; --line:#333338; --accent:#6d93ff; --ok:#4cc36b; --warn:#e0b44c; --bad:#ff6b7f; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } .sub { color: var(--muted); margin: 0 0 20px; }
+  .steps { display:flex; gap:8px; margin-bottom:16px; font-size:13px; color:var(--muted); flex-wrap: wrap; }
+  .steps span { padding:3px 10px; border:1px solid var(--line); border-radius:99px; } .steps .on { color:var(--ink); border-color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:16px; }
+  textarea { width:100%; min-height:96px; font:inherit; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); resize: vertical; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; margin-top:10px; align-items:center; }
+  select { font:inherit; padding:6px 8px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); max-width:100%; }
+  button { font:inherit; padding:8px 16px; border-radius:8px; border:0; background:var(--accent); color:#fff; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  .headline { font-size:17px; font-weight:600; margin:0 0 10px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; } td, th { text-align:left; padding:6px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; } .src { color:var(--muted); font-size:13px; }
+  .tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:99px; border:1px solid currentColor; }
+  .pass { color:var(--ok); } .warning { color:var(--warn); } .fail { color:var(--bad); }
+  .confirm { background: color-mix(in srgb, var(--warn) 12%, transparent); border-radius:8px; padding:8px 12px; margin:10px 0; }
+  .muted { color:var(--muted); } pre { white-space:pre-wrap; font:inherit; margin:0; }
+  .files a { display:inline-block; margin:4px 8px 4px 0; padding:6px 12px; border:1px solid var(--line); border-radius:8px; color:var(--ink); text-decoration:none; }
+  .scroll { overflow-x:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AGE Designer</h1>
+  <p class="sub">Describe a porous part in plain language. You approve the design before anything is generated, and every number is measured on the result.</p>
+  <div class="steps"><span id="s1" class="on">1 Describe</span><span id="s2">2 Review</span><span id="s3">3 Download</span></div>
+
+  <div class="card">
+    <textarea id="text" placeholder="e.g. Bone scaffold, 10 x 10 x 10 mm cube, gyroid, 70% porosity, for my resin printer"></textarea>
+    <div class="row">
+      <label>Process <select id="process"><option value="">from the text</option></select></label>
+      <label>Printer <select id="printer"><option value="">generic for the process</option></select></label>
+      <button id="propose">Propose design</button>
+    </div>
+  </div>
+
+  <div id="proposal"></div>
+  <div id="result"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let sid = null, printers = [];
+
+function step(n) { [1,2,3].forEach(i => $("s"+i).className = i <= n ? "on" : ""); }
+
+async function loadPrinters() {
+  try {
+    printers = await (await fetch("/api/printers")).json();
+    const procs = [...new Set(printers.map(p => p.process))];
+    procs.forEach(p => $("process").insertAdjacentHTML("beforeend", `<option>${esc(p)}</option>`));
+    fillPrinters();
+  } catch (e) { /* offline or server not ready: selectors stay at defaults */ }
+}
+function fillPrinters() {
+  const proc = $("process").value;
+  $("printer").innerHTML = '<option value="">generic for the process</option>' +
+    printers.filter(p => !proc || p.process === proc).map(p => `<option value="${esc(p.id)}">${esc(p.name)}${p.calibrated ? " (calibrated)" : ""}</option>`).join("");
+}
+$("process").onchange = fillPrinters;
+
+function proposalHTML(c) {
+  let h = `<div class="card"><p class="headline">${esc(c.headline)}</p>`;
+  if (c.status === "infeasible") {
+    h += `<pre>${esc(c.explanation)}</pre>`;
+    if (c.alternatives.length) h += "<p><b>Try instead:</b></p><ul>" + c.alternatives.map(a => `<li>${esc(a.description)}</li>`).join("") + "</ul>";
+    return h + "</div>";
+  }
+  h += '<div class="scroll"><table><tr><th>Quantity</th><th>Value</th><th>Source</th></tr>' +
+    c.numbers.map(n => `<tr><td>${esc(n.label)}${n.confirm ? " *" : ""}</td><td>${esc(n.value)}</td><td class="src">${esc(n.source)}${n.detail ? " - " + esc(n.detail) : ""}</td></tr>`).join("") + "</table></div>";
+  if (c.predicted.length) h += `<p class="muted">Predicted: ${c.predicted.map(p => esc(p.label) + " " + esc(p.value)).join(", ")}.</p>`;
+  if (c.printer.id) h += `<p class="muted">Printer limits (${esc(c.printer.id)}): walls at least ${esc(c.printer.min_wall_mm)} mm, openings at least ${esc(c.printer.min_opening_mm)} mm.</p>`;
+  if (c.confirm.length) h += `<div class="confirm"><b>Please check (*):</b><ul>${c.confirm.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
+  [...c.unsupported, ...c.ambiguities].forEach(x => h += `<p class="warning">${esc(x)}</p>`);
+  c.notes.forEach(n => h += `<p class="muted">Note: ${esc(n)}</p>`);
+  if (c.citations.length) h += `<details><summary class="muted">References</summary><ol>${c.citations.map(x => `<li class="src">${esc(x)}</li>`).join("")}</ol></details>`;
+  h += `<div class="row"><button id="approve">Approve and generate</button><span id="progress" class="muted"></span></div></div>`;
+  return h;
+}
+
+function resultHTML(d) {
+  const r = d.result;
+  let h = `<div class="card"><p class="headline">${esc(r.headline)}</p><p>${esc(r.summary)}</p>`;
+  h += '<div class="scroll"><table><tr><th>Measured</th><th>Value</th><th>Target</th></tr>' +
+    r.measured.map(m => `<tr><td>${esc(m.label)}</td><td>${esc(m.value)}</td><td>${esc(m.target)}</td></tr>`).join("") + "</table></div>";
+  if (r.printer_checks.length) h += "<p><b>Printer check</b></p>" + r.printer_checks.map(c => `<span class="tag ${esc(c.status)}">${esc(c.name.replace("print_", ""))}: ${esc(c.status)}</span> `).join("");
+  if (r.iterations.length > 1) h += `<p class="muted">${r.iterations.length - 1} automatic repair(s): ` + r.iterations.flatMap(i => i.repairs).map(x => `${esc(x.rule)} ${esc(x.from)} → ${esc(x.to)}`).join("; ") + "</p>";
+  h += '<p class="files">' + d.files.map(k => `<a href="/api/sessions/${sid}/files/${k}" download>${esc(k.toUpperCase())}</a>`).join("") + "</p></div>";
+  return h;
+}
+
+$("propose").onclick = async () => {
+  const text = $("text").value.trim();
+  if (!text) return;
+  $("propose").disabled = true; $("result").innerHTML = ""; $("proposal").innerHTML = '<div class="card muted">Reading the request and checking the printer…</div>';
+  try {
+    const res = await fetch("/api/sessions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text, process: $("process").value, printer: $("printer").value})});
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || res.statusText);
+    sid = d.session_id; step(2);
+    $("proposal").innerHTML = proposalHTML(d.proposal);
+    const ap = $("approve"); if (ap) ap.onclick = approve;
+  } catch (e) { $("proposal").innerHTML = `<div class="card fail">${esc(e.message)}</div>`; }
+  $("propose").disabled = false;
+};
+
+async function approve() {
+  $("approve").disabled = true;
+  await fetch(`/api/sessions/${sid}/approve`, {method: "POST"});
+  const poll = async () => {
+    const d = await (await fetch(`/api/sessions/${sid}`)).json();
+    $("progress").textContent = d.message || d.state;
+    if (d.state === "done") { step(3); $("result").innerHTML = resultHTML(d); return; }
+    if (d.state === "error") { $("result").innerHTML = `<div class="card fail">${esc(d.error)}</div>`; return; }
+    setTimeout(poll, 1500);
+  };
+  poll();
+}
+loadPrinters();
+</script>
+</body>
+</html>

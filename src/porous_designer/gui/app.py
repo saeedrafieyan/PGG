@@ -12,6 +12,7 @@ from pathlib import Path
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="porous-designer-gui")
     parser.add_argument("--debug-gui", action="store_true", help="write structured GUI runtime diagnostics")
+    parser.add_argument("--advanced", action="store_true", help="open the full engineering window instead of the simple Describe -> Review -> Download window")
     args, qt_args = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
     try:
         from PySide6.QtWidgets import QApplication
@@ -31,13 +32,18 @@ def main(argv: list[str] | None = None) -> int:
 
     log_path = configure_gui_logging(debug=args.debug_gui)
     gui_event("app_start", argv=qt_args, log_path=str(log_path))
-    from porous_designer.gui.main_window import MainWindow
-
     app = QApplication.instance() or QApplication([sys.argv[0], *qt_args])
     gui_event("qapplication_ready", top_level_widgets=len(QApplication.topLevelWidgets()))
-    app.setApplicationName("PGG, Porous Geometry Generation")
+    app.setApplicationName("AGE, Agentic Geometry Engineering")
     app.setOrganizationName("Federica Research Lab")
-    window = MainWindow()
+    if args.advanced:
+        from porous_designer.gui.main_window import MainWindow
+
+        window = MainWindow()
+    else:
+        from porous_designer.gui.simple_window import SimpleWindow
+
+        window = SimpleWindow()
     window.show()
     gui_event("main_window_shown", top_level_widgets=len(QApplication.topLevelWidgets()))
     code = app.exec()
