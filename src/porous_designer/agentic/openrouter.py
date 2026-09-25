@@ -205,7 +205,10 @@ class OpenRouterClient:
                                 retryable=False,
                                 try_next_model=True,
                             )
-                    response = httpx.Response(streamed.status_code, headers=streamed.headers, content=b"".join(chunks))
+                    # iter_bytes() has already undone any Content-Encoding (gzip,
+                    # br); rebuilding with those headers would decode twice.
+                    headers = {k: v for k, v in streamed.headers.items() if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")}
+                    response = httpx.Response(streamed.status_code, headers=headers, content=b"".join(chunks))
         except httpx.TimeoutException as exc:
             raise OpenRouterError(f"OpenRouter request timed out: {exc}", status=None, category=ProviderErrorCategory.PROVIDER_TIMEOUT, retryable=True, try_next_model=True) from exc
         except httpx.HTTPError as exc:

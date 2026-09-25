@@ -568,3 +568,20 @@ def test_source_checkout_defaults_do_not_depend_on_cwd(monkeypatch, tmp_path):
     assert root is not None and (root / "pyproject.toml").exists()
     assert paths.runs_dir() == root / "runs"
     assert paths.default_config_path() == root / "configs" / "default.yaml"
+
+
+def test_gzip_encoded_response_is_decoded_once():
+    # OpenRouter may gzip the body; the streamed bytes are already decoded.
+    import gzip
+
+    import httpx
+
+    from porous_designer.agentic.openrouter import OpenRouterClient
+
+    payload = {"id": "g1", "model": "m", "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-encoding": "gzip", "content-type": "application/json"}, content=gzip.compress(json.dumps(payload).encode()))
+
+    client = OpenRouterClient("test-key", transport=httpx.MockTransport(handler))
+    assert client.chat({"model": "m", "messages": []}).content == "ok"
